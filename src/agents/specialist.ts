@@ -46,7 +46,8 @@ export async function runSpecialist(
   const today = new Date().toISOString().slice(0, 10);
   const messages: ChatMessage[] = [
     { role: "system", content: `${config.systemPrompt}\n\n${UNTRUSTED_DATA_RULE}\nToday's date is ${today}.` },
-    { role: "user", content: task },
+    // The task may span several domains; each specialist handles only its own part.
+    { role: "user", content: `Handle only the ${config.name} part of this request; other specialists cover the rest.\n\n${task}` },
   ];
 
   let summary = "";

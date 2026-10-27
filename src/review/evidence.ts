@@ -6,7 +6,8 @@ export interface ReviewResult {
 }
 
 const CURRENCY = String.raw`(?:GBP|USD|EUR|SGD|AED|INR|JPY|CHF|AUD|CAD)`;
-const AMOUNT = String.raw`(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?`;
+// Thousands may be grouped with commas or spaces (including no-break and thin spaces): "1,560" or "1 560".
+const AMOUNT = String.raw`(\d{1,3}(?:[,\u00a0\u202f\u2009 ]\d{3})+|\d+)(?:\.(\d{1,2}))?`;
 const MONEY = new RegExp(String.raw`(?:[£$€]|\b${CURRENCY}\b)\s?${AMOUNT}|${AMOUNT}\s?(?:[£$€]|\b${CURRENCY}\b)`, "g");
 const URL = /https?:\/\/[^\s)\]>"']+/g;
 const MAX_SOURCE_AGE_MS = 24 * 3_600_000;
@@ -57,7 +58,7 @@ export function groundedFacts(results: SpecialistResult[], citations: Citation[]
 
 export function moneyAmounts(text: string): number[] {
   return [...text.matchAll(MONEY)].map((m) => {
-    const whole = (m[1] ?? m[3] ?? "0").replace(/,/g, "");
+    const whole = (m[1] ?? m[3] ?? "0").replace(/[,\u00a0\u202f\u2009 ]/g, "");
     const cents = m[2] ?? m[4];
     return Number(cents ? `${whole}.${cents}` : whole);
   });

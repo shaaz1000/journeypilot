@@ -21,11 +21,13 @@ const SearchHotelsInput = z
   .object({
     city: z.string().min(2).max(60).describe("City name, e.g. London"),
     checkIn: isoDate.describe("Check-in date, YYYY-MM-DD"),
-    checkOut: isoDate.describe("Check-out date, YYYY-MM-DD"),
+    checkOut: isoDate.optional().describe("Check-out date, YYYY-MM-DD. Give this or nights."),
+    nights: z.number().int().min(1).max(30).optional().describe("Number of nights, when no check-out date is given"),
     guests: z.number().int().min(1).max(8).default(1),
     maxNightlyRate: z.number().positive().optional().describe("Optional nightly budget in local currency"),
   })
-  .refine((v) => v.checkOut > v.checkIn, { message: "checkOut must be after checkIn", path: ["checkOut"] });
+  .refine((v) => (v.checkOut === undefined) !== (v.nights === undefined), { message: "give exactly one of checkOut or nights", path: ["checkOut"] })
+  .refine((v) => v.checkOut === undefined || v.checkOut > v.checkIn, { message: "checkOut must be after checkIn", path: ["checkOut"] });
 
 export function nightsBetween(checkIn: string, checkOut: string): number {
   return Math.round((Date.parse(checkOut) - Date.parse(checkIn)) / 86_400_000);
@@ -36,9 +38,12 @@ export const searchHotelsTool = defineTool({
   description: "Search DEMO hotel inventory for a city and dates. Returns nightly rate and total stay cost separately. Results are demo data, not live availability.",
   input: SearchHotelsInput,
   source: "local",
-  async execute({ city, checkIn, checkOut, guests, maxNightlyRate }) {
+  async execute({ city, checkIn, checkOut: requestedCheckOut, nights: requestedNights, guests, maxNightlyRate }) {
+    const checkOut = requestedCheckOut ?? new Date(Date.parse(checkIn) + requestedNights! * 86_400_000).toISOString().slice(0, 10);
     const nights = nightsBetween(checkIn, checkOut);
-    const hotels = DEMO_HOTELS.filter((h) => h.city === city.trim().toLowerCase())
+    // Match the city or a named area, so "Heathrow" finds airport hotels as well as "London" does.
+    const place = city.trim().toLowerCase();
+    const hotels = DEMO_HOTELS.filter((h) => h.city === place || h.area.toLowerCase().includes(place))
       .filter((h) => maxNightlyRate === undefined || h.nightlyRate <= maxNightlyRate)
       .map(({ city: _city, ...h }) => ({ ...h, nights, totalStayCost: h.nightlyRate * nights }));
     return {

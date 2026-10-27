@@ -53,11 +53,25 @@ describe("argument validation", () => {
     ["non-ISO date", { city: "London", checkIn: "10/12/2026", checkOut: "2026-12-12" }],
     ["check-out before check-in", { city: "London", checkIn: "2026-12-12", checkOut: "2026-12-10" }],
     ["missing city", { checkIn: "2026-12-10", checkOut: "2026-12-12" }],
+    ["neither check-out nor nights", { city: "London", checkIn: "2026-12-10" }],
+    ["both check-out and nights", { city: "London", checkIn: "2026-12-10", checkOut: "2026-12-12", nights: 2 }],
   ])("rejects %s before execution", async (_label, args) => {
     const tracer = new Tracer();
     const result = await gateway.invoke("hotel", "search_hotels", args, tracer);
     expect(!result.ok && result.error.kind).toBe("invalid_args");
     expect(eventsOf(tracer.events, "tool")[0]?.status).toBe("invalid_args");
+  });
+
+  it("matches an area as well as a city", async () => {
+    const result = await gateway.invoke("hotel", "search_hotels", { city: "Heathrow", checkIn: "2026-12-10", nights: 2 }, new Tracer());
+    if (!result.ok) throw result.error;
+    expect((result.evidence.data as { hotels: { name: string }[] }).hotels.map((h) => h.name)).toEqual(["Bridgeview Hotel Heathrow"]);
+  });
+
+  it("accepts a length of stay instead of a check-out date", async () => {
+    const result = await gateway.invoke("hotel", "search_hotels", { city: "London", checkIn: "2026-12-10", nights: 3 }, new Tracer());
+    if (!result.ok) throw result.error;
+    expect((result.evidence.data as { query: { checkOut: string; nights: number } }).query).toMatchObject({ checkOut: "2026-12-13", nights: 3 });
   });
 
   it("separates nightly rate from total stay cost and labels demo data", async () => {

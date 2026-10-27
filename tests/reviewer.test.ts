@@ -25,6 +25,7 @@ const cites = (rs: SpecialistResult[]): Citation[] => rs.flatMap((r) => r.eviden
 describe("evidence reviewer", () => {
   it("parses money in several formats", () => {
     expect(moneyAmounts("£256, 276 GBP, USD 1,234.50 and $9")).toEqual([256, 276, 1234.5, 9]);
+    expect(moneyAmounts("total 1 560 AED, or 1\u202f560 AED")).toEqual([1560, 1560]);
   });
 
   it("passes an answer whose prices and links come from tool results", () => {
