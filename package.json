@@ -22,5 +22,8 @@
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^3.2.7"
+  },
+  "overrides": {
+    "rollup": "4.62.3"
   }
 }
