@@ -1,6 +1,7 @@
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SPECIALISTS, TOOL_PERMISSIONS } from "./agents/definitions.js";
 import type { AppConfig } from "./config.js";
+import { NvidiaEmbedder } from "./llm/embeddings.js";
 import { NvidiaClient } from "./llm/nvidia.js";
 import type { LlmClient } from "./llm/types.js";
 import { McpConnection } from "./mcp/connection.js";
@@ -69,7 +70,7 @@ export async function createApp(config: AppConfig, overrides: AppOverrides = {})
       createFlightSearchTool({ connection, timeoutMs: config.MCP_TIMEOUT_MS, unavailableReason: mcp.error }),
       searchHotelsTool,
       findOfficialSourcesTool,
-      createFetchOfficialPageTool(),
+      createFetchOfficialPageTool(fetch, 20_000, new NvidiaEmbedder({ apiKey: config.NVIDIA_API_KEY, baseUrl: config.NVIDIA_BASE_URL, model: config.NVIDIA_EMBED_MODEL, timeoutMs: 15_000 })),
     ],
     TOOL_PERMISSIONS,
   );

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { createFetchOfficialPageTool, findOfficialSourcesTool, isAllowedUrl, relevantExcerpts } from "../src/tools/benefits.js";
+import { createFetchOfficialPageTool, findOfficialSourcesTool, isAllowedUrl } from "../src/tools/benefits.js";
+import { htmlToPassages, normaliseSpace, rankPassages } from "../src/tools/pageText.js";
+import type { Embedder } from "../src/llm/embeddings.js";
 import { ToolGateway } from "../src/tools/gateway.js";
 import { Tracer } from "../src/trace/tracer.js";
 import { AMEX_PAGE, pageResponse } from "./helpers.js";
@@ -61,8 +63,47 @@ describe("benefits tools", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("selects passages that match the query", () => {
-    const text = `${"filler ".repeat(200)} Guests are charged a fee per visit. ${"filler ".repeat(200)}`;
-    expect(relevantExcerpts(text, "guest fee")[0]).toContain("Guests are charged a fee");
+});
+
+describe("page text", () => {
+  const html = `<html><head><title>Lounge &amp; guest rules</title><style>.x{}</style></head><body>
+    <nav><a>Home</a><a>Help</a></nav>
+    <script>alert("ignored")</script>
+    <h2>Guests</h2>
+    <p>Cardmembers may bring one guest into participating lounges at no charge.</p>
+    <ul><li>Additional guests are charged &pound;24 per person, per visit.</li><li>Children under two travel free in most lounges listed here.</li></ul>
+    <p>Lounge opening hours vary by airport and may change at short notice.</p>
+  </body></html>`;
+
+  it("parses blocks into passages, skips scripts and styles, and decodes entities", () => {
+    const { title, passages } = htmlToPassages(html);
+    expect(title).toBe("Lounge & guest rules");
+    expect(passages.join(" ")).not.toContain("alert");
+    expect(passages).toContain("Additional guests are charged £24 per person, per visit.");
+  });
+
+  it("collapses whitespace without changing words", () => {
+    expect(normaliseSpace("  a\n\t b   c ")).toBe("a b c");
+  });
+
+  it("ranks passages by embedding similarity", async () => {
+    const { passages } = htmlToPassages(html);
+    // A stand-in embedder: the query and the fee passage share a direction, everything else is orthogonal.
+    const embedder: Embedder = {
+      model: "fake",
+      async embed(texts) {
+        return texts.map((t) => (t.includes("cost") || t.includes("charged") ? [1, 0] : [0, 1]));
+      },
+    };
+    const { excerpts, method } = await rankPassages(passages, "how much does an extra guest cost", embedder, 1);
+    expect(method).toBe("embeddings");
+    expect(excerpts).toEqual(["Additional guests are charged £24 per person, per visit."]);
+  });
+
+  it("falls back to shared words when embeddings fail", async () => {
+    const failing: Embedder = { model: "down", embed: async () => { throw new Error("503"); } };
+    const { excerpts, method } = await rankPassages(htmlToPassages(html).passages, "lounge opening hours", failing, 1);
+    expect(method).toBe("word_overlap");
+    expect(excerpts[0]).toContain("opening hours");
   });
 });

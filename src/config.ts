@@ -14,6 +14,7 @@ const ConfigSchema = z.object({
   // Thinking is logged end to end. Turning it off makes replies roughly five times faster.
   NVIDIA_THINKING: booleanFlag("true"),
   NVIDIA_THINKING_TOKENS: z.coerce.number().int().positive().default(2048),
+  NVIDIA_EMBED_MODEL: z.string().min(1).default("nvidia/nemotron-3.5-embed-1b"),
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   KIWI_MCP_URL: z.url().default("https://mcp.kiwi.com"),
   MCP_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
