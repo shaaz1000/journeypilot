@@ -103,3 +103,19 @@ final text. Results are written to `evals/results/`.
 Commit at each coherent stage. Commit messages are plain and factual, with no Co-authored-by trailers,
 no decorative symbols and no triple equals signs. Run the tests before finishing and report the
 results, known limitations and commit hashes.
+
+## 10. Changes after the reviewed plan
+
+The plan above was the starting point. These changes came from testing the running system, and each is in
+its own commit.
+
+| Change | Why |
+|--------|-----|
+| Structured answers and a grounding judge replaced the pattern-based evidence reviewer | The pattern checker misread "1 560 AED" and links in backticks. Now the model refers to results by ID, code renders prices and links from tool data, and a second model call must explicitly support every sentence, or it is removed. |
+| Missing details become questions before any agent runs | "find me a bombay delhi ticket" reached the Flight agent and came back as a failure. Intent-specific slots (route and date, hotel city and check-in, passport and layover city) are now asked for in plain language. |
+| Conversation memory, with the model deciding `continue` or `new_request` | Follow-ups such as "in INR, business class" lost their context. |
+| Destination, Passenger Rights and Transit agents | Requested after the first version: currency conversion, local time, things to see, delay and cancellation law, and layover visas. Each has its own tools and its own source allowlist. |
+| Second MCP integration: Playwright headless browser | Most airline baggage pages refuse plain requests or need JavaScript. The browser identifies itself honestly; airlines that refuse automated access are reported with their official link. |
+| Web chat page, token-protected admin trace console, Langfuse Cloud export over OpenTelemetry | Requested for testing and for team access to end-to-end traces. Langfuse's legacy ingestion API rejected events, so the export uses its OTLP endpoint. |
+| Model thinking enabled and logged | Requested; it costs latency (median about 55 s with thinking, against 10 s without). |
+| No regex for interpreting content | Requested. Routing was already model-based. Page parsing (htmlparser2), passage ranking (Nemotron embeddings), answer checking (the judge) and Markdown rendering (markdown-it) replaced the remaining patterns. Only log redaction keeps patterns, for fixed secret and personal-data formats. |
