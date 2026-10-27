@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { TraceEvent, TraceSink } from "./tracer.js";
 
 export interface LangfuseOptions {
@@ -11,109 +11,198 @@ export interface LangfuseOptions {
   fetchImpl?: typeof fetch;
 }
 
-interface IngestionItem {
-  id: string;
-  timestamp: string;
-  type: "trace-create" | "span-create" | "generation-create" | "event-create";
-  body: Record<string, unknown>;
+type Level = "DEFAULT" | "WARNING" | "ERROR";
+type ObservationType = "span" | "generation" | "event" | "agent" | "tool" | "guardrail";
+
+interface OtlpAttribute {
+  key: string;
+  value: { stringValue: string };
 }
 
-type Level = "DEFAULT" | "WARNING" | "ERROR";
+export interface OtlpSpan {
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  name: string;
+  kind: number;
+  startTimeUnixNano: string;
+  endTimeUnixNano: string;
+  attributes: OtlpAttribute[];
+  status: { code: number; message?: string };
+}
 
-const startOf = (e: TraceEvent) =>
-  typeof e.durationMs === "number" ? new Date(Date.parse(e.timestamp) - e.durationMs).toISOString() : e.timestamp;
+/** OTLP wants 32-hex trace IDs and 16-hex span IDs; ours are UUIDs and short UUID slices, so derive stable ones. */
+export const otelTraceId = (traceId: string) => traceId.replace(/-/g, "").padEnd(32, "0").slice(0, 32);
+export const otelSpanId = (traceId: string, spanId: string) => createHash("sha256").update(`${traceId}:${spanId}`).digest("hex").slice(0, 16);
+
+const nanos = (iso: string) => `${BigInt(Date.parse(iso)) * 1_000_000n}`;
+const json = (value: unknown) => (typeof value === "string" ? value : JSON.stringify(value));
+
+function attrs(values: Record<string, unknown>): OtlpAttribute[] {
+  return Object.entries(values)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .map(([key, v]) => ({ key, value: { stringValue: json(v) } }));
+}
+
+interface Observation {
+  name: string;
+  type: ObservationType;
+  start: string;
+  end: string;
+  input?: unknown;
+  output?: unknown;
+  level?: Level;
+  statusMessage?: string;
+  metadata?: Record<string, unknown>;
+  extra?: Record<string, unknown>;
+  /** Overrides for the root span. */
+  spanId?: string;
+  parentSpanId?: string | null;
+}
+
+/** Per-trace state the mapping needs: the request's span (the root) and its message. */
+export interface TraceState {
+  rootSpanId: string;
+  startedAt: string;
+  message: unknown;
+}
 
 /**
- * Maps one JourneyPilot trace event to Langfuse ingestion items. Events arrive already redacted.
- * `rootSpanId` is the request's span: its children attach to the trace itself rather than to an observation.
+ * Maps one JourneyPilot trace event (already redacted) to OTLP spans with Langfuse attributes.
+ * The request becomes the root span, written when the final event arrives so it carries the answer.
  */
-export function toLangfuse(e: TraceEvent, rootSpanId: string | undefined): IngestionItem[] {
-  const obs = (spanId: string) => `${e.traceId.slice(0, 8)}-${spanId}`;
-  const parent = e.parentSpanId && e.parentSpanId !== rootSpanId ? obs(e.parentSpanId) : undefined;
-  const item = (type: IngestionItem["type"], body: Record<string, unknown>): IngestionItem => ({ id: randomUUID(), timestamp: e.timestamp, type, body });
-  const observation = (name: string, extra: Record<string, unknown>, level: Level = "DEFAULT") => ({
-    id: obs(e.spanId),
-    traceId: e.traceId,
-    parentObservationId: parent,
-    name,
-    level,
-    ...extra,
-  });
-  const event = (name: string, output: unknown, level: Level = "DEFAULT", input?: unknown) =>
-    item("event-create", observation(name, { startTime: e.timestamp, input, output }, level));
+export function toOtelSpans(e: TraceEvent, state: TraceState | undefined): OtlpSpan[] {
+  const traceId = otelTraceId(e.traceId);
+  const startOf = typeof e.durationMs === "number" ? new Date(Date.parse(e.timestamp) - e.durationMs).toISOString() : e.timestamp;
+
+  const span = (o: Observation): OtlpSpan => {
+    const parent = o.parentSpanId === null ? undefined : (o.parentSpanId ?? e.parentSpanId);
+    const metadata = Object.fromEntries(Object.entries(o.metadata ?? {}).map(([k, v]) => [`langfuse.observation.metadata.${k}`, v]));
+    return {
+      traceId,
+      spanId: otelSpanId(e.traceId, o.spanId ?? e.spanId),
+      parentSpanId: parent ? otelSpanId(e.traceId, parent) : undefined,
+      name: o.name,
+      kind: 1,
+      startTimeUnixNano: nanos(o.start),
+      endTimeUnixNano: nanos(o.end),
+      attributes: attrs({
+        "langfuse.observation.type": o.type,
+        "langfuse.observation.input": o.input,
+        "langfuse.observation.output": o.output,
+        "langfuse.observation.level": o.level ?? "DEFAULT",
+        "langfuse.observation.status_message": o.statusMessage,
+        ...metadata,
+        ...o.extra,
+      }),
+      status: o.level === "ERROR" ? { code: 2, message: o.statusMessage } : { code: 0 },
+    };
+  };
+  const event = (name: string, type: ObservationType, output: unknown, level: Level = "DEFAULT", input?: unknown) =>
+    span({ name, type, start: e.timestamp, end: e.timestamp, input, output, level });
 
   switch (e.kind) {
     case "request":
-      return [item("trace-create", { id: e.traceId, timestamp: e.timestamp, name: "travel-request", input: e.message, metadata: { requestId: e.requestId }, tags: ["journeypilot"] })];
+      return [];
     case "classification":
-      return [event("classification", { valid: e.valid, intents: e.intents, confidence: e.confidence, travelTask: e.travelTask, unsupportedPortion: e.unsupportedPortion }, e.valid ? "DEFAULT" : "WARNING")];
+      return [event("classification", "event", { valid: e.valid, intents: e.intents, confidence: e.confidence, travelTask: e.travelTask, unsupportedPortion: e.unsupportedPortion }, e.valid ? "DEFAULT" : "WARNING")];
     case "policy":
-      return [event(`policy:${e.outcome}`, { outcome: e.outcome, reason: e.reason, agents: e.agents, declinedPortion: e.declinedPortion }, e.outcome === "allow" ? "DEFAULT" : "WARNING")];
+      return [event(`policy:${e.outcome}`, "guardrail", { outcome: e.outcome, reason: e.reason, agents: e.agents, declinedPortion: e.declinedPortion }, e.outcome === "allow" ? "DEFAULT" : "WARNING")];
     case "delegation":
-      return [event(`delegate:${e.agent}`, { reason: e.reason, task: e.task })];
+      return [event(`delegate:${e.agent}`, "event", { reason: e.reason, task: e.task })];
     case "agent": {
-      if (e.status === "reminded" || e.status === "model_error") return [event(`agent:${e.agent}:${e.status}`, { reason: e.reason, reply: e.reply, error: e.error }, "WARNING")];
-      const level: Level = e.status === "failed" ? "ERROR" : e.status === "partial" ? "WARNING" : "DEFAULT";
+      if (e.status === "reminded" || e.status === "model_error") {
+        return [event(`agent:${e.agent}:${e.status}`, "event", { reason: e.reason, reply: e.reply, error: e.error }, "WARNING")];
+      }
+      const errors = Array.isArray(e.errors) ? (e.errors as string[]) : [];
       return [
-        item("span-create", observation(`agent:${e.agent}`, {
-          startTime: startOf(e),
-          endTime: e.timestamp,
+        span({
+          name: `agent:${e.agent}`,
+          type: "agent",
+          start: startOf,
+          end: e.timestamp,
           input: { reason: e.reason },
-          output: { status: e.status, summary: e.summary, toolCalls: e.toolCalls, errors: e.errors },
+          output: { status: e.status, summary: e.summary, toolCalls: e.toolCalls, errors },
+          level: e.status === "failed" ? "ERROR" : e.status === "partial" ? "WARNING" : "DEFAULT",
+          statusMessage: errors.length ? errors.join("; ") : undefined,
           metadata: { reminded: e.reminded },
-          statusMessage: Array.isArray(e.errors) && e.errors.length ? e.errors.join("; ") : undefined,
-        }, level)),
+        }),
       ];
     }
     case "model": {
       const usage = e.usage as { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined;
       return [
-        item("generation-create", observation(`model:${String(e.purpose)}`, {
-          startTime: startOf(e),
-          endTime: e.timestamp,
-          model: e.model,
+        span({
+          name: `model:${String(e.purpose)}`,
+          type: "generation",
+          start: startOf,
+          end: e.timestamp,
           input: e.prompt,
           output: { thinking: e.reasoning ?? undefined, content: e.response ?? undefined, toolCalls: e.toolCalls },
-          usage: usage ? { input: usage.promptTokens, output: usage.completionTokens, total: usage.totalTokens, unit: "TOKENS" } : undefined,
+          level: e.status === "error" ? "ERROR" : "DEFAULT",
+          statusMessage: e.status === "error" ? String(e.error) : undefined,
           metadata: { provider: e.provider, toolsOffered: e.toolsOffered, toolChoice: e.toolChoice, finishReason: e.finishReason },
-          statusMessage: e.status === "error" ? e.error : undefined,
-        }, e.status === "error" ? "ERROR" : "DEFAULT")),
+          extra: {
+            "langfuse.observation.model.name": e.model,
+            "langfuse.observation.usage_details": usage ? { input: usage.promptTokens, output: usage.completionTokens, total: usage.totalTokens } : undefined,
+          },
+        }),
       ];
     }
     case "tool":
       return [
-        item("span-create", observation(`tool:${e.tool}`, {
-          startTime: startOf(e),
-          endTime: e.timestamp,
+        span({
+          name: `tool:${e.tool}`,
+          type: "tool",
+          start: startOf,
+          end: e.timestamp,
           input: e.args,
           output: e.status === "ok" ? e.result : { error: e.error },
-          metadata: { agent: e.agent, status: e.status, source: e.source, mcpServer: e.server, attempts: e.attempts, dataSource: e.dataSource, toolCallId: e.toolCallId },
+          level: e.status === "ok" ? "DEFAULT" : "ERROR",
           statusMessage: e.status === "ok" ? undefined : String(e.error ?? e.status),
-        }, e.status === "ok" ? "DEFAULT" : "ERROR")),
-      ];
-    case "review":
-      return [event("evidence-review", { passed: e.passed, findings: e.findings, replaced: e.replaced }, e.replaced ? "WARNING" : "DEFAULT", e.rejectedBody)];
-    case "final":
-      return [
-        item("trace-create", {
-          id: e.traceId,
-          output: e.answer,
-          metadata: { requestId: e.requestId, status: e.status, durationMs: e.durationMs, agentsUsed: e.agentsUsed, sources: e.sources, limitations: e.limitations, review: e.review },
-          tags: ["journeypilot", String(e.status)],
+          metadata: { agent: e.agent, status: e.status, source: e.source, mcpServer: e.server, attempts: e.attempts, dataSource: e.dataSource, toolCallId: e.toolCallId },
         }),
       ];
+    case "review":
+      return [event("evidence-review", "guardrail", { passed: e.passed, findings: e.findings, replaced: e.replaced }, e.replaced ? "WARNING" : "DEFAULT", e.rejectedBody)];
+    case "final": {
+      if (!state) return [];
+      const status = String(e.status);
+      return [
+        span({
+          name: "travel-request",
+          type: "span",
+          spanId: state.rootSpanId,
+          parentSpanId: null,
+          start: state.startedAt,
+          end: e.timestamp,
+          input: state.message,
+          output: e.answer,
+          level: status === "failed" ? "ERROR" : status === "partial" ? "WARNING" : "DEFAULT",
+          metadata: { requestId: e.requestId, status, agentsUsed: e.agentsUsed, sources: e.sources, limitations: e.limitations, review: e.review },
+          extra: {
+            "langfuse.trace.name": "travel-request",
+            "langfuse.trace.input": state.message,
+            "langfuse.trace.output": e.answer,
+            "langfuse.trace.tags": ["journeypilot", status],
+            "langfuse.trace.metadata.requestId": e.requestId,
+            "langfuse.trace.metadata.status": status,
+          },
+        }),
+      ];
+    }
     default:
       return [];
   }
 }
 
 /**
- * Sends trace events to Langfuse Cloud through its public ingestion API. Batches in the background;
- * failures are reported on stderr and never affect request handling.
+ * Sends trace events to Langfuse Cloud over its OpenTelemetry endpoint (OTLP/HTTP JSON). Batches in the
+ * background; failures are reported on stderr and never affect request handling.
  */
 export class LangfuseSink implements TraceSink {
-  private queue: IngestionItem[] = [];
-  private readonly roots = new Map<string, string>();
+  private queue: OtlpSpan[] = [];
+  private readonly traces = new Map<string, TraceState>();
   private readonly timer: NodeJS.Timeout;
   private sending: Promise<void> = Promise.resolve();
   private readonly auth: string;
@@ -128,15 +217,15 @@ export class LangfuseSink implements TraceSink {
 
   write(event: TraceEvent): void {
     try {
-      if (event.kind === "request") this.roots.set(event.traceId, event.spanId);
-      this.queue.push(...toLangfuse(event, this.roots.get(event.traceId)));
+      if (event.kind === "request") this.traces.set(event.traceId, { rootSpanId: event.spanId, startedAt: event.timestamp, message: event.message });
+      this.queue.push(...toOtelSpans(event, this.traces.get(event.traceId)));
       const max = this.options.maxQueue ?? 2000;
       if (this.queue.length > max) {
-        process.stderr.write(`langfuse: queue over ${max} items, dropping the oldest\n`);
+        process.stderr.write(`langfuse: queue over ${max} spans, dropping the oldest\n`);
         this.queue.splice(0, this.queue.length - max);
       }
       if (event.kind === "final") {
-        this.roots.delete(event.traceId);
+        this.traces.delete(event.traceId);
         void this.flush();
       } else if (this.queue.length >= (this.options.maxBatch ?? 50)) void this.flush();
     } catch (error) {
@@ -147,10 +236,7 @@ export class LangfuseSink implements TraceSink {
   /** Sends everything queued so far. Calls are serialised so batches stay in order. */
   flush(): Promise<void> {
     this.sending = this.sending.then(async () => {
-      while (this.queue.length) {
-        const batch = this.queue.splice(0, this.options.maxBatch ?? 50);
-        await this.send(batch);
-      }
+      while (this.queue.length) await this.send(this.queue.splice(0, this.options.maxBatch ?? 50));
     });
     return this.sending;
   }
@@ -160,24 +246,34 @@ export class LangfuseSink implements TraceSink {
     await this.flush();
   }
 
-  private async send(batch: IngestionItem[], attempt = 1): Promise<void> {
+  private async send(spans: OtlpSpan[], attempt = 1): Promise<void> {
+    const body = {
+      resourceSpans: [
+        {
+          resource: { attributes: attrs({ "service.name": "journeypilot" }) },
+          scopeSpans: [{ scope: { name: "journeypilot", version: "0.1.0" }, spans }],
+        },
+      ],
+    };
     try {
-      const response = await this.fetchImpl(`${this.options.baseUrl.replace(/\/$/, "")}/api/public/ingestion`, {
+      const response = await this.fetchImpl(`${this.options.baseUrl.replace(/\/$/, "")}/api/public/otel/v1/traces`, {
         method: "POST",
-        headers: { Authorization: this.auth, "Content-Type": "application/json" },
-        body: JSON.stringify({ batch }),
+        headers: { Authorization: this.auth, "Content-Type": "application/json", "x-langfuse-ingestion-version": "4" },
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(10_000),
       });
-      if (response.status >= 500 && attempt < 2) return this.send(batch, attempt + 1);
+      if (response.status >= 500 && attempt < 2) return this.send(spans, attempt + 1);
       if (!response.ok) {
-        process.stderr.write(`langfuse: ingestion returned ${response.status}: ${(await response.text()).slice(0, 200)}\n`);
+        process.stderr.write(`langfuse: OTLP export returned ${response.status}: ${(await response.text()).slice(0, 200)}\n`);
         return;
       }
-      const result = (await response.json().catch(() => ({}))) as { errors?: { status?: number; message?: string }[] };
-      if (result.errors?.length) process.stderr.write(`langfuse: ${result.errors.length} of ${batch.length} events rejected: ${result.errors[0]?.message ?? ""}\n`);
+      const result = (await response.json().catch(() => ({}))) as { partialSuccess?: { rejectedSpans?: number | string; errorMessage?: string } };
+      if (Number(result.partialSuccess?.rejectedSpans ?? 0) > 0) {
+        process.stderr.write(`langfuse: ${result.partialSuccess?.rejectedSpans} of ${spans.length} spans rejected: ${result.partialSuccess?.errorMessage ?? ""}\n`);
+      }
     } catch (error) {
-      if (attempt < 2) return this.send(batch, attempt + 1);
-      process.stderr.write(`langfuse: could not send ${batch.length} events: ${String(error)}\n`);
+      if (attempt < 2) return this.send(spans, attempt + 1);
+      process.stderr.write(`langfuse: could not send ${spans.length} spans: ${String(error)}\n`);
     }
   }
 }

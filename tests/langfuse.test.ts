@@ -1,17 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
-import { LangfuseSink, toLangfuse } from "../src/trace/langfuse.js";
+import { LangfuseSink, otelSpanId, otelTraceId, toOtelSpans, type OtlpSpan } from "../src/trace/langfuse.js";
 import { Tracer } from "../src/trace/tracer.js";
 
-function capture() {
-  const bodies: { batch: { type: string; body: Record<string, unknown> }[] }[] = [];
-  const headers: Record<string, string>[] = [];
-  const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-    bodies.push(JSON.parse(String(init?.body)));
-    headers.push(init?.headers as Record<string, string>);
-    return new Response(JSON.stringify({ successes: [], errors: [] }), { status: 207 });
-  });
-  return { bodies, headers, fetchImpl: fetchImpl as unknown as typeof fetch };
+interface Captured {
+  url: string;
+  headers: Record<string, string>;
+  spans: OtlpSpan[];
 }
+
+function capture() {
+  const calls: Captured[] = [];
+  const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    calls.push({ url: String(url), headers: init?.headers as Record<string, string>, spans: body.resourceSpans[0].scopeSpans[0].spans });
+    return new Response("{}", { status: 200 });
+  });
+  return { calls, fetchImpl: fetchImpl as unknown as typeof fetch };
+}
+
+const attr = (span: OtlpSpan, key: string) => span.attributes.find((a) => a.key === key)?.value.stringValue;
 
 /** Emits a small but complete request through a Tracer, the way the orchestrator does. */
 function runTrace(tracer: Tracer) {
@@ -32,49 +39,80 @@ function runTrace(tracer: Tracer) {
   return { root, agentSpan };
 }
 
-describe("Langfuse export", () => {
-  it("maps a request to a trace with nested generations and spans", async () => {
-    const { bodies, headers, fetchImpl } = capture();
-    const sink = new LangfuseSink({ baseUrl: "https://cloud.example", publicKey: "pk-lf-1", secretKey: "sk-lf-1", fetchImpl });
+describe("Langfuse export (OTLP)", () => {
+  it("sends spans to the OTLP endpoint with basic auth and the v4 ingestion header", async () => {
+    const { calls, fetchImpl } = capture();
+    const sink = new LangfuseSink({ baseUrl: "https://jp.cloud.example/", publicKey: "pk-lf-1", secretKey: "sk-lf-1", fetchImpl });
+    runTrace(new Tracer([sink]));
+    await sink.close();
+    expect(calls[0]?.url).toBe("https://jp.cloud.example/api/public/otel/v1/traces");
+    expect(calls[0]?.headers).toMatchObject({
+      Authorization: `Basic ${Buffer.from("pk-lf-1:sk-lf-1").toString("base64")}`,
+      "Content-Type": "application/json",
+      "x-langfuse-ingestion-version": "4",
+    });
+  });
+
+  it("maps a request to a root span with nested agent, generation and tool observations", async () => {
+    const { calls, fetchImpl } = capture();
+    const sink = new LangfuseSink({ baseUrl: "https://cloud.example", publicKey: "pk", secretKey: "sk", fetchImpl });
     const tracer = new Tracer([sink]);
-    const { agentSpan } = runTrace(tracer);
+    const { root, agentSpan } = runTrace(tracer);
     await sink.close();
 
-    expect(headers[0]?.Authorization).toBe(`Basic ${Buffer.from("pk-lf-1:sk-lf-1").toString("base64")}`);
-    const items = bodies.flatMap((b) => b.batch);
-    const types = items.map((i) => i.type);
-    expect(types.filter((t) => t === "trace-create")).toHaveLength(2); // created on request, updated with the output
-    const generation = items.find((i) => i.type === "generation-create")!.body;
-    expect(generation).toMatchObject({ name: "model:agent:flight", model: "nemotron", usage: { input: 300, output: 40, total: 340, unit: "TOKENS" } });
-    expect(generation.input).toEqual([{ role: "system", content: "You are the Flight Agent" }, { role: "user", content: "LHR to JFK" }]);
-    expect((generation.output as { thinking: string }).thinking).toContain("call search_flights");
+    const spans = calls.flatMap((c) => c.spans);
+    const byName = (name: string) => spans.find((s) => s.name === name)!;
+    const traceId = otelTraceId(tracer.traceId);
+    expect(traceId).toMatch(/^[0-9a-f]{32}$/);
+    expect(spans.every((s) => s.traceId === traceId && /^[0-9a-f]{16}$/.test(s.spanId))).toBe(true);
 
-    const agentObservation = `${tracer.traceId.slice(0, 8)}-${agentSpan}`;
-    expect(generation.parentObservationId).toBe(agentObservation);
-    const tool = items.find((i) => i.body.name === "tool:search_flights")!.body;
-    expect(tool).toMatchObject({ parentObservationId: agentObservation, level: "ERROR", statusMessage: "timed out" });
-    const agent = items.find((i) => i.body.name === "agent:flight")!.body;
-    expect(agent).toMatchObject({ id: agentObservation, level: "ERROR" });
-    expect(agent.parentObservationId).toBeUndefined(); // direct child of the request attaches to the trace
-    expect(Date.parse(String(agent.startTime))).toBeLessThan(Date.parse(String(agent.endTime)));
+    const rootSpan = byName("travel-request");
+    expect(rootSpan.spanId).toBe(otelSpanId(tracer.traceId, root));
+    expect(rootSpan.parentSpanId).toBeUndefined();
+    expect(attr(rootSpan, "langfuse.observation.input")).toBe("Flights LHR to JFK");
+    expect(attr(rootSpan, "langfuse.observation.output")).toBe("Flight data is unavailable.");
+    expect(attr(rootSpan, "langfuse.trace.name")).toBe("travel-request");
+
+    const agent = byName("agent:flight");
+    expect(agent.parentSpanId).toBe(rootSpan.spanId);
+    expect(attr(agent, "langfuse.observation.type")).toBe("agent");
+    expect(agent.status.code).toBe(2);
+
+    const generation = byName("model:agent:flight");
+    expect(generation.parentSpanId).toBe(otelSpanId(tracer.traceId, agentSpan));
+    expect(attr(generation, "langfuse.observation.type")).toBe("generation");
+    expect(attr(generation, "langfuse.observation.model.name")).toBe("nemotron");
+    expect(JSON.parse(attr(generation, "langfuse.observation.input")!)).toEqual([{ role: "system", content: "You are the Flight Agent" }, { role: "user", content: "LHR to JFK" }]);
+    expect(JSON.parse(attr(generation, "langfuse.observation.output")!).thinking).toContain("call search_flights");
+    expect(JSON.parse(attr(generation, "langfuse.observation.usage_details")!)).toEqual({ input: 300, output: 40, total: 340 });
+    expect(attr(generation, "langfuse.observation.metadata.toolsOffered")).toBe('["search_flights"]');
+
+    const tool = byName("tool:search_flights");
+    expect(tool.parentSpanId).toBe(generation.parentSpanId);
+    expect(attr(tool, "langfuse.observation.type")).toBe("tool");
+    expect(attr(tool, "langfuse.observation.level")).toBe("ERROR");
+    expect(attr(tool, "langfuse.observation.metadata.mcpServer")).toBe("kiwi");
+    expect(BigInt(tool.endTimeUnixNano) - BigInt(tool.startTimeUnixNano)).toBe(45_000_000_000n);
+
+    expect(attr(byName("policy:allow"), "langfuse.observation.type")).toBe("guardrail");
   });
 
   it("flushes as soon as a request finishes", async () => {
-    const { bodies, fetchImpl } = capture();
+    const { calls, fetchImpl } = capture();
     const sink = new LangfuseSink({ baseUrl: "https://cloud.example", publicKey: "pk", secretKey: "sk", fetchImpl, flushIntervalMs: 60_000 });
     runTrace(new Tracer([sink]));
-    await vi.waitFor(() => expect(bodies.length).toBeGreaterThan(0));
+    await vi.waitFor(() => expect(calls.length).toBeGreaterThan(0));
     await sink.close();
   });
 
   it("sends redacted data only", async () => {
-    const { bodies, fetchImpl } = capture();
+    const { calls, fetchImpl } = capture();
     const sink = new LangfuseSink({ baseUrl: "https://cloud.example", publicKey: "pk", secretKey: "sk-lf-secret-value", fetchImpl });
     const tracer = new Tracer([sink], { secrets: ["nvapi-should-never-leave", "sk-lf-secret-value"] });
     tracer.emit("request", { message: "email me at jo@example.com, key nvapi-should-never-leave" });
     tracer.emit("final", { status: "declined", answer: "no" });
     await sink.close();
-    const sent = JSON.stringify(bodies);
+    const sent = JSON.stringify(calls.map((c) => c.spans));
     expect(sent).not.toContain("jo@example.com");
     expect(sent).not.toContain("nvapi-should-never-leave");
     expect(sent).not.toContain("sk-lf-secret-value");
@@ -92,6 +130,6 @@ describe("Langfuse export", () => {
   });
 
   it("ignores unknown event kinds", () => {
-    expect(toLangfuse({ kind: "other" as never, traceId: "t", requestId: "r", spanId: "s", timestamp: new Date().toISOString() }, undefined)).toEqual([]);
+    expect(toOtelSpans({ kind: "other" as never, traceId: "t", requestId: "r", spanId: "s", timestamp: new Date().toISOString() }, undefined)).toEqual([]);
   });
 });
