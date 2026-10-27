@@ -17,6 +17,8 @@ export interface TraceEvent {
 
 export interface TraceSink {
   write(event: TraceEvent): void;
+  /** Sends anything buffered and stops background work; called on shutdown. */
+  close?(): Promise<void>;
 }
 
 export class JsonlFileSink implements TraceSink {

@@ -12,7 +12,7 @@ function printTrace(tracer: Tracer): void {
       : e.kind === "classification" ? `intents=${JSON.stringify(e.intents)} confidence=${e.confidence}`
       : e.kind === "delegation" ? `-> ${e.agent}`
       : e.kind === "tool" ? `${e.agent} ${e.tool} [${e.source}${e.server ? `:${e.server}` : ""}] ${e.status} ${e.durationMs ?? ""}ms`
-      : e.kind === "model" ? `${e.purpose} ${e.status} ${e.durationMs}ms`
+      : e.kind === "model" ? `${e.purpose} ${e.status} ${e.durationMs}ms ${(e.toolCalls as { name: string }[] | undefined)?.map((c) => c.name).join(", ") ?? ""}`
       : e.kind === "agent" ? `${e.agent} ${e.status} ${e.durationMs ?? ""}ms`
       : e.kind === "review" ? `passed=${e.passed} replaced=${e.replaced} ${JSON.stringify(e.findings)}`
       : e.kind === "final" ? `${e.status} ${e.durationMs}ms`
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   const app = await createApp(config);
   const showTrace = process.argv.includes("--trace");
   const question = process.argv.slice(2).filter((a) => a !== "--trace").join(" ").trim();
-  console.log(`model: ${config.NVIDIA_MODEL} | MCP ${app.mcp.server}: ${app.mcp.connected ? `connected, tools ${app.mcp.discoveredTools.join(", ")}` : app.mcp.error}`);
+  console.log(`model: ${config.NVIDIA_MODEL} | MCP ${app.mcp.server}: ${app.mcp.connected ? `connected, tools ${app.mcp.discoveredTools.join(", ")}` : app.mcp.error} | cloud tracing: ${app.cloud.enabled ? "Langfuse" : "off"}`);
 
   try {
     if (question) {

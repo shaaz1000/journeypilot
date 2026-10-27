@@ -34,6 +34,8 @@ export interface TokenUsage {
 
 export interface ChatResponse {
   content: string | null;
+  /** The model's thinking, when reasoning is enabled and the provider returns it. */
+  reasoning?: string;
   toolCalls: ToolCall[];
   finishReason: string | null;
   usage?: TokenUsage;

@@ -59,7 +59,10 @@ export interface FinalAnswer {
   requestId: string;
   traceId: string;
   status: FinalStatus;
+  /** Full text: body plus appended limitations and sources. */
   answer: string;
+  /** The answer without the appended limitations and sources, for interfaces that render those separately. */
+  body: string;
   agentsUsed: AgentName[];
   citations: Citation[];
   limitations: string[];

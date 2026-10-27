@@ -6,12 +6,15 @@ interface NvidiaOptions {
   model: string;
   timeoutMs: number;
   maxAttempts?: number;
+  /** Enable Nemotron reasoning; the thinking is returned and logged. Adds `thinkingTokens` to each budget. */
+  thinking?: boolean;
+  thinkingTokens?: number;
 }
 
 /**
  * Client for NVIDIA's OpenAI-compatible chat completions endpoint.
- * Reasoning is disabled: Nemotron's thinking tokens otherwise consume the budget before a tool call.
- * There is deliberately no fallback to another provider.
+ * Reasoning is optional. When on, the thinking is returned for logging and extra tokens are added to the
+ * budget so thinking cannot crowd out the tool call. There is deliberately no fallback to another provider.
  */
 export class NvidiaClient implements LlmClient {
   readonly provider = "nvidia";
@@ -25,9 +28,9 @@ export class NvidiaClient implements LlmClient {
     const body: Record<string, unknown> = {
       model: this.model,
       messages: request.messages,
-      max_tokens: request.maxTokens ?? 1024,
+      max_tokens: (request.maxTokens ?? 1024) + (this.options.thinking ? (this.options.thinkingTokens ?? 2048) : 0),
       temperature: request.temperature ?? 0.2,
-      chat_template_kwargs: { enable_thinking: false },
+      chat_template_kwargs: { enable_thinking: this.options.thinking ?? false },
     };
     if (request.tools?.length) {
       body.tools = request.tools.map((tool) => ({ type: "function", function: tool }));
@@ -70,13 +73,14 @@ export class NvidiaClient implements LlmClient {
     }
 
     const json = (await response.json()) as {
-      choices?: { message?: { content?: string | null; tool_calls?: ChatResponse["toolCalls"] }; finish_reason?: string }[];
+      choices?: { message?: { content?: string | null; reasoning_content?: string | null; tool_calls?: ChatResponse["toolCalls"] }; finish_reason?: string }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
     const choice = json.choices?.[0];
     if (!choice?.message) throw new LlmError("malformed completion: no message in response", response.status, true);
     return {
       content: choice.message.content ?? null,
+      reasoning: choice.message.reasoning_content ?? undefined,
       toolCalls: choice.message.tool_calls ?? [],
       finishReason: choice.finish_reason ?? null,
       usage: json.usage && {

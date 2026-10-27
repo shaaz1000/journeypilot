@@ -46,6 +46,7 @@ export class Orchestrator {
         traceId: tracer.traceId,
         status,
         answer,
+        body: extra.body ?? answer,
         agentsUsed: extra.agentsUsed ?? [],
         citations: extra.citations ?? [],
         limitations: extra.limitations ?? [],
@@ -60,7 +61,8 @@ export class Orchestrator {
           sources: result.citations.map((c) => c.url),
           limitations: result.limitations,
           review: result.review,
-          answer: tracer.payload(answer),
+          // The answer is the system's own output, so it is logged in full (redacted) for review.
+          answer,
         },
         { parentSpanId: rootSpan },
       );
@@ -130,6 +132,7 @@ export class Orchestrator {
     const failed = results.filter((r) => r.status === "failed").length;
     const status: FinalStatus = failed === results.length ? "failed" : failed > 0 || results.some((r) => r.status === "partial") ? "partial" : "answered";
     return finish(status, compose(body, citations, limitations), {
+      body,
       agentsUsed: results.map((r) => r.agent),
       citations,
       limitations,
