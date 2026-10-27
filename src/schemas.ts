@@ -6,12 +6,25 @@ export type AgentName = (typeof AGENT_NAMES)[number];
 export const TRAVEL_INTENTS = ["flight_search", "hotel_search", "lounge_benefits", "trip_planning"] as const;
 export type TravelIntent = (typeof TRAVEL_INTENTS)[number];
 
+/** One earlier turn of the conversation, sent by the chat client with each new message. */
+export interface ChatTurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
+export const MAX_HISTORY_TURNS = 10;
+
 /** Details a search cannot run without. Asked for before any agent runs. */
 export const REQUIRED_DETAILS = ["origin", "destination", "departure_date", "hotel_city", "check_in_date"] as const;
 export type RequiredDetail = (typeof REQUIRED_DETAILS)[number];
 
 /** What the orchestrator's classification call must return. Anything else fails closed. */
+export const CONVERSATION_USES = ["continue", "new_request"] as const;
+export type ConversationUse = (typeof CONVERSATION_USES)[number];
+
 export const ClassificationSchema = z.object({
+  // Decided first: whether earlier turns feed into this request at all.
+  conversation_use: z.enum(CONVERSATION_USES).default("new_request"),
   intents: z.array(z.enum(TRAVEL_INTENTS)).max(4),
   confidence: z.number().min(0).max(1),
   travel_task: z.string().max(1000),
@@ -66,6 +79,8 @@ export interface FinalAnswer {
   requestId: string;
   traceId: string;
   status: FinalStatus;
+  /** Whether the classifier used the earlier conversation for this answer. */
+  conversationUse: ConversationUse;
   /** Full text: body plus appended limitations and sources. */
   answer: string;
   /** The answer without the appended limitations and sources, for interfaces that render those separately. */

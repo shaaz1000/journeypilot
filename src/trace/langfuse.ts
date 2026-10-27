@@ -65,6 +65,8 @@ export interface TraceState {
   rootSpanId: string;
   startedAt: string;
   message: unknown;
+  /** The chat conversation; Langfuse groups traces with the same session id. */
+  sessionId?: unknown;
 }
 
 /**
@@ -105,7 +107,7 @@ export function toOtelSpans(e: TraceEvent, state: TraceState | undefined): OtlpS
     case "request":
       return [];
     case "classification":
-      return [event("classification", "event", { valid: e.valid, intents: e.intents, confidence: e.confidence, travelTask: e.travelTask, unsupportedPortion: e.unsupportedPortion }, e.valid ? "DEFAULT" : "WARNING")];
+      return [event("classification", "event", { valid: e.valid, conversationUse: e.conversationUse, historyTurns: e.historyTurns, intents: e.intents, confidence: e.confidence, travelTask: e.travelTask, unsupportedPortion: e.unsupportedPortion }, e.valid ? "DEFAULT" : "WARNING")];
     case "policy":
       return [event(`policy:${e.outcome}`, "guardrail", { outcome: e.outcome, reason: e.reason, agents: e.agents, declinedPortion: e.declinedPortion }, e.outcome === "allow" ? "DEFAULT" : "WARNING")];
     case "delegation":
@@ -182,6 +184,7 @@ export function toOtelSpans(e: TraceEvent, state: TraceState | undefined): OtlpS
           metadata: { requestId: e.requestId, status, agentsUsed: e.agentsUsed, sources: e.sources, limitations: e.limitations, review: e.review },
           extra: {
             "langfuse.trace.name": "travel-request",
+            "langfuse.session.id": typeof state.sessionId === "string" ? state.sessionId : undefined,
             "langfuse.trace.input": state.message,
             "langfuse.trace.output": e.answer,
             "langfuse.trace.tags": ["journeypilot", status],
@@ -217,7 +220,7 @@ export class LangfuseSink implements TraceSink {
 
   write(event: TraceEvent): void {
     try {
-      if (event.kind === "request") this.traces.set(event.traceId, { rootSpanId: event.spanId, startedAt: event.timestamp, message: event.message });
+      if (event.kind === "request") this.traces.set(event.traceId, { rootSpanId: event.spanId, startedAt: event.timestamp, message: event.message, sessionId: event.conversationId });
       this.queue.push(...toOtelSpans(event, this.traces.get(event.traceId)));
       const max = this.options.maxQueue ?? 2000;
       if (this.queue.length > max) {

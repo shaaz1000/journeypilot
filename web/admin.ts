@@ -3,6 +3,7 @@ import { el, formatDuration, richText, safeLink } from "./dom.js";
 interface TraceSummary {
   traceId: string;
   requestId: string;
+  conversationId?: string;
   startedAt: string;
   message: string;
   status: string;
@@ -77,7 +78,7 @@ const chip = (status: string) => el("span", { class: `chip chip--${status}` }, s
 
 function renderList(): void {
   const q = search.value.trim().toLowerCase();
-  const rows = summaries.filter((s) => !q || s.message.toLowerCase().includes(q) || s.requestId.includes(q) || s.traceId.includes(q));
+  const rows = summaries.filter((s) => !q || s.message.toLowerCase().includes(q) || s.requestId.includes(q) || s.traceId.includes(q) || (s.conversationId ?? "").includes(q));
   list.replaceChildren(
     ...(rows.length
       ? rows.map((s) => {
@@ -93,6 +94,7 @@ function renderList(): void {
               s.toolCalls ? `, ${s.toolCalls} tool call${s.toolCalls === 1 ? "" : "s"}` : "",
               s.toolErrors ? el("span", { class: "warn" }, `, ${s.toolErrors} failed`) : "",
               s.reviewReplaced ? el("span", { class: "warn" }, ", answer replaced") : "",
+              s.conversationId ? `. Conversation ${s.conversationId.slice(0, 8)}` : "",
             ),
           );
           row.addEventListener("click", () => void select(s.traceId));
@@ -139,7 +141,10 @@ function buildTree(events: TraceEvent[]): { roots: Node_[]; t0: number; t1: numb
 
 function title(e: TraceEvent): string {
   switch (e.kind) {
-    case "classification": return `Classified as ${(e.intents as string[] | undefined)?.join(", ") || "no travel intent"}`;
+    case "classification": {
+      const use = e.conversationUse === "continue" ? ", continues the conversation" : Number(e.historyTurns) > 0 ? ", new request" : "";
+      return `Classified as ${(e.intents as string[] | undefined)?.join(", ") || "no travel intent"}${use}`;
+    }
     case "policy": return `Policy: ${e.outcome}`;
     case "delegation": return `Delegated to ${e.agent} agent`;
     case "agent": return e.status === "reminded" ? `${e.agent} agent reminded to use its tools` : `${e.agent} agent finished: ${e.status}`;
@@ -228,8 +233,12 @@ async function select(traceId: string): Promise<void> {
         el("div", {}, el("dt", {}, "Total time"), el("dd", {}, formatDuration(final?.durationMs))),
         el("div", {}, el("dt", {}, "Request"), el("dd", {}, events[0]?.requestId as string)),
         el("div", {}, el("dt", {}, "Trace"), el("dd", {}, traceId)),
+        request?.conversationId ? el("div", {}, el("dt", {}, "Conversation"), el("dd", {}, String(request.conversationId))) : "",
       ),
     ),
+    Array.isArray(request?.history) && request.history.length
+      ? el("section", { class: "final" }, el("h3", {}, "Conversation context sent with this message"), ...(request.history as { role: string; text: string }[]).map((t) => el("p", { class: "muted" }, `${t.role === "user" ? "Traveller" : "JourneyPilot"}: ${t.text.slice(0, 300)}`)))
+      : "",
     final?.answer ? el("section", { class: "final" }, el("h3", {}, "Response sent to the traveller"), richText(String(final.answer))) : "",
     el("h3", { class: "flow__title" }, "End-to-end flow"),
     el("p", { class: "muted flow__hint" }, "Select a step to see its prompt, arguments, results and errors."),

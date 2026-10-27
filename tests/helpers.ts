@@ -28,7 +28,7 @@ export function text(content: string): ChatResponse {
   return { content, toolCalls: [], finishReason: "stop" };
 }
 
-export function classification(fields: Partial<{ intents: string[]; confidence: number; travel_task: string; unsupported_portion: string; clarifying_question: string; missing_details: string[] }>): ChatResponse {
+export function classification(fields: Partial<{ conversation_use: string; intents: string[]; confidence: number; travel_task: string; unsupported_portion: string; clarifying_question: string; missing_details: string[] }>): ChatResponse {
   return toolCall("classify_request", { intents: [], confidence: 0.9, travel_task: "", unsupported_portion: "", ...fields });
 }
 

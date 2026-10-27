@@ -5,6 +5,7 @@ import type { TraceEvent } from "../trace/tracer.js";
 export interface TraceSummary {
   traceId: string;
   requestId: string;
+  conversationId?: string;
   startedAt: string;
   message: string;
   status: string;
@@ -75,6 +76,7 @@ function summarise(events: TraceEvent[]): TraceSummary {
   return {
     traceId: first.traceId,
     requestId: first.requestId,
+    conversationId: typeof request?.conversationId === "string" ? request.conversationId : undefined,
     startedAt: (request ?? first).timestamp,
     message: typeof request?.message === "string" ? request.message : "",
     status: typeof final?.status === "string" ? final.status : "in_progress",

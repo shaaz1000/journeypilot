@@ -30,6 +30,17 @@ export function redactString(input: string, options: RedactOptions = {}): string
   return output;
 }
 
+const ID_CHARS = new Set("0123456789abcdefABCDEF-_");
+
+/**
+ * Generated identifiers (UUIDs and similar, under keys ending in "id") contain digit runs that look like
+ * card or phone numbers. They are kept intact so traces stay linkable; anything with other characters,
+ * such as a passport number, is still masked.
+ */
+function isGeneratedId(key: string, value: string): boolean {
+  return key.toLowerCase().endsWith("id") && value.length <= 64 && [...value].every((c) => ID_CHARS.has(c));
+}
+
 /** Deep-redacts any JSON-like value. Values under sensitive keys are dropped entirely. */
 export function redact<T>(value: T, options: RedactOptions = {}): T {
   if (typeof value === "string") return redactString(value, options) as T;
@@ -37,7 +48,9 @@ export function redact<T>(value: T, options: RedactOptions = {}): T {
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, inner] of Object.entries(value)) {
-      out[key] = isSensitiveKey(key) ? "[REDACTED]" : redact(inner, options);
+      if (isSensitiveKey(key)) out[key] = "[REDACTED]";
+      else if (typeof inner === "string" && isGeneratedId(key, inner) && !(options.secrets ?? []).some((s) => s.length >= 6 && inner.includes(s))) out[key] = inner;
+      else out[key] = redact(inner, options);
     }
     return out as T;
   }

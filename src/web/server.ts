@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { build } from "esbuild";
 import type { CloudTracing, McpStatus } from "../app.js";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
+import { MAX_HISTORY_TURNS, type ChatTurn } from "../schemas.js";
 import { TraceStore } from "./traceStore.js";
 
 export interface ServerOptions {
@@ -84,13 +85,30 @@ function originHost(origin: string): string {
 }
 
 const TRACE_ID_CHARS = new Set("0123456789abcdef-");
+
+function isSafeId(id: string): boolean {
+  return id.length >= 8 && id.length <= 64 && [...id].every((c) => TRACE_ID_CHARS.has(c));
+}
+
+/** Validates the conversation the client sends; returns null when it is malformed. */
+function parseHistory(raw: unknown): ChatTurn[] | null {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw) || raw.length > 40) return null;
+  const turns: ChatTurn[] = [];
+  for (const item of raw) {
+    const turn = item as { role?: unknown; text?: unknown };
+    if ((turn.role !== "user" && turn.role !== "assistant") || typeof turn.text !== "string") return null;
+    turns.push({ role: turn.role, text: turn.text.slice(0, 4000) });
+  }
+  return turns.slice(-MAX_HISTORY_TURNS);
+}
 const TRACES_PREFIX = "/api/admin/traces/";
 
 /** Trace IDs are UUIDs; anything else is rejected before touching the store. */
 function traceIdFrom(pathname: string): string | null {
   if (!pathname.startsWith(TRACES_PREFIX)) return null;
   const id = pathname.slice(TRACES_PREFIX.length);
-  return id.length >= 8 && id.length <= 64 && [...id].every((c) => TRACE_ID_CHARS.has(c)) ? id : null;
+  return isSafeId(id) ? id : null;
 }
 
 /**
@@ -126,18 +144,21 @@ export async function createWebServer(options: ServerOptions): Promise<Server> {
 
       // Traveller endpoint: returns the answer only. Tool calls and traces stay on the admin side.
       if (req.method === "POST" && url.pathname === "/api/chat") {
-        let body: { message?: unknown; previous?: unknown };
+        let body: { message?: unknown; history?: unknown; conversationId?: unknown };
         try {
           body = ((await readJson(req)) ?? {}) as typeof body;
         } catch {
           return sendJson(res, 400, { error: "Send JSON like {\"message\": \"...\"} under 16 KB." });
         }
         if (typeof body.message !== "string") return sendJson(res, 400, { error: "message must be a string" });
-        if (body.previous !== undefined && typeof body.previous !== "string") return sendJson(res, 400, { error: "previous must be a string" });
-        const { result } = await options.orchestrator.handle(body.message, { previousMessage: body.previous });
+        const history = parseHistory(body.history);
+        if (history === null) return sendJson(res, 400, { error: "history must be a list of {role: user|assistant, text} turns" });
+        const conversationId = typeof body.conversationId === "string" && isSafeId(body.conversationId) ? body.conversationId : undefined;
+        const { result } = await options.orchestrator.handle(body.message, { history, conversationId });
         return sendJson(res, 200, {
           requestId: result.requestId,
           status: result.status,
+          conversationUse: result.conversationUse,
           body: result.body,
           agentsUsed: result.agentsUsed,
           citations: result.citations,

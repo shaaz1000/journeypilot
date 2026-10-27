@@ -46,6 +46,15 @@ export function grade(testCase: EvalCase, result: FinalAnswer, events: TraceEven
     checks.push({ name: "mcp_used", passed: mcpOk.length > 0, detail: mcpOk.length ? `server ${mcpOk[0]?.server}` : "no successful MCP call" });
   }
 
+  if (expect.conversationUse) {
+    checks.push({ name: "conversation_use", passed: result.conversationUse === expect.conversationUse, detail: `got ${result.conversationUse}, expected ${expect.conversationUse}` });
+  }
+  if (expect.toolArgs) {
+    const { tool, args } = expect.toolArgs;
+    const matched = tools.some((t) => t.tool === tool && t.status === "ok" && Object.entries(args).every(([k, v]) => (t.args as Record<string, unknown> | undefined)?.[k] === v));
+    checks.push({ name: `tool_args:${tool}`, passed: matched, detail: matched ? JSON.stringify(args) : `no successful ${tool} call with ${JSON.stringify(args)}` });
+  }
+
   if (expect.status) {
     checks.push({ name: "status", passed: expect.status.includes(result.status), detail: `got ${result.status}` });
   }

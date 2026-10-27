@@ -40,7 +40,7 @@ async function main(): Promise<void> {
     for (let run = 1; run <= repeats; run++) {
       for (const testCase of cases) {
         const started = performance.now();
-        const { result, tracer } = await app.orchestrator.handle(testCase.message);
+        const { result, tracer } = await app.orchestrator.handle(testCase.message, { history: testCase.history });
         const checks = grade(testCase, result, tracer.events);
         const models = tracer.events.filter((e) => e.kind === "model");
         const entry: CaseRun = {

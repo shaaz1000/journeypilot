@@ -3,6 +3,7 @@ import { el, richText, safeLink } from "./dom.js";
 interface ChatReply {
   requestId: string;
   status: "answered" | "partial" | "declined" | "clarify" | "refused" | "failed";
+  conversationUse: "continue" | "new_request";
   body: string;
   agentsUsed: string[];
   citations: { url: string; title: string; retrievedAt: string }[];
@@ -17,9 +18,17 @@ const input = document.querySelector<HTMLTextAreaElement>("#message")!;
 const send = document.querySelector<HTMLButtonElement>("#send")!;
 const intro = document.querySelector<HTMLElement>("#intro")!;
 const DEFAULT_PLACEHOLDER = input.placeholder;
+const restart = document.querySelector<HTMLButtonElement>("#restart")!;
 
-/** While JourneyPilot is waiting on a detail, the earlier messages travel with the next one. */
-let pendingContext: string | null = null;
+interface Turn {
+  role: "user" | "assistant";
+  text: string;
+}
+
+/** The conversation so far. The last turns go with every message so follow-ups keep their context. */
+let history: Turn[] = [];
+let conversationId = crypto.randomUUID();
+const HISTORY_SENT = 10;
 
 function scrollToEnd(): void {
   window.scrollTo({ top: document.body.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
@@ -46,7 +55,8 @@ function renderReply(reply: ChatReply): HTMLElement {
     );
   }
   const via = reply.agentsUsed.map((a) => AGENT_NAMES[a] ?? a).join(", ");
-  card.append(el("footer", { class: "reply__meta" }, via ? `Used ${via}. ` : "", `Reference ${reply.requestId}`));
+  const context = reply.conversationUse === "continue" ? "Followed on from your earlier messages. " : history.length > 0 ? "Treated as a new request. " : "";
+  card.append(el("footer", { class: "reply__meta" }, context, via ? `Used ${via}. ` : "", `Reference ${reply.requestId}`));
   return card;
 }
 
@@ -58,20 +68,17 @@ async function ask(message: string): Promise<void> {
   scrollToEnd();
   send.disabled = true;
   try {
-    const previous = pendingContext;
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(previous ? { message, previous } : { message }),
+      body: JSON.stringify({ message, history: history.slice(-HISTORY_SENT), conversationId }),
     });
     const data = (await response.json()) as ChatReply | { error: string };
     pending.replaceWith("error" in data ? el("p", { class: "error" }, data.error) : renderReply(data));
-    if (!("error" in data) && data.status === "clarify") {
-      pendingContext = previous ? `${previous}\n${message}` : message;
-      input.placeholder = "Type the missing detail, for example 15 November";
-    } else if (!("error" in data)) {
-      pendingContext = null;
-      input.placeholder = DEFAULT_PLACEHOLDER;
+    if (!("error" in data)) {
+      history.push({ role: "user", text: message }, { role: "assistant", text: data.body });
+      restart.hidden = false;
+      input.placeholder = data.status === "clarify" ? "Type the missing detail, for example 15 November" : "Ask a follow-up, for example: in INR, business class";
     }
   } catch {
     pending.replaceWith(el("p", { class: "error" }, "JourneyPilot didn't respond. Check the server is running, then send your question again."));
@@ -81,6 +88,16 @@ async function ask(message: string): Promise<void> {
     scrollToEnd();
   }
 }
+
+restart.addEventListener("click", () => {
+  history = [];
+  conversationId = crypto.randomUUID();
+  thread.replaceChildren();
+  intro.hidden = false;
+  restart.hidden = true;
+  input.placeholder = DEFAULT_PLACEHOLDER;
+  input.focus();
+});
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();

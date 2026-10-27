@@ -70,13 +70,57 @@ describe("orchestrator: domain restriction", () => {
     expect(eventsOf(tracer.events, "policy")[0]).toMatchObject({ outcome: "clarify", missingDetails: ["departure_date"] });
   });
 
-  it("reads a follow-up together with the message it completes", async () => {
+  it("reads a follow-up together with the conversation so far", async () => {
     const llm = new ScriptedLlm({ classify: () => classification({ intents: ["flight_search"], confidence: 0.95, travel_task: "Flights Mumbai to Delhi on 2026-11-15" }), "agent:flight": () => text("Need nothing else"), synthesise: () => text("ok") });
-    const { tracer } = await testOrchestrator({ llm }).orchestrator.handle("15 November", { previousMessage: "find me a bombay delhi ticket" });
+    const history = [
+      { role: "user" as const, text: "find me a bombay delhi ticket" },
+      { role: "assistant" as const, text: "I can search that for you. Which date do you want to fly?" },
+    ];
+    const { tracer } = await testOrchestrator({ llm }).orchestrator.handle("15 November", { history, conversationId: "3f2a9c1e-0000-4000-8000-000000000001" });
     const prompt = llm.calls[0]!.messages[1]!.content as string;
-    expect(prompt).toContain("<previous_message>\nfind me a bombay delhi ticket");
+    expect(prompt).toContain("<conversation>\nTraveller: find me a bombay delhi ticket\nJourneyPilot: I can search that for you.");
     expect(prompt).toContain("<user_message>\n15 November");
-    expect(eventsOf(tracer.events, "request")[0]).toMatchObject({ message: "15 November", previousMessage: "find me a bombay delhi ticket" });
+    expect(eventsOf(tracer.events, "request")[0]).toMatchObject({ message: "15 November", conversationId: "3f2a9c1e-0000-4000-8000-000000000001", history });
+  });
+
+  it("records whether a message continued the conversation, and only trusts that when history exists", async () => {
+    const llm = new ScriptedLlm({ classify: () => classification({ conversation_use: "continue", intents: [], confidence: 0.9 }) });
+    const { orchestrator } = testOrchestrator({ llm });
+    const alone = await orchestrator.handle("write me a poem");
+    expect(alone.result.conversationUse).toBe("new_request"); // no history, so "continue" cannot be true
+    const followUp = await orchestrator.handle("and in INR?", { history: [{ role: "user", text: "flights DEL to BOM on 2 Nov" }] });
+    expect(followUp.result.conversationUse).toBe("continue");
+    expect(eventsOf(followUp.tracer.events, "classification")[0]).toMatchObject({ conversationUse: "continue", historyTurns: 1 });
+  });
+
+  it("starts a new request when the model says the message does not depend on earlier turns", async () => {
+    const llm = new ScriptedLlm({
+      classify: () => classification({ conversation_use: "new_request", intents: ["lounge_benefits"], confidence: 0.9, travel_task: "Priority Pass guest rules for Amex Platinum UK" }),
+      "agent:benefits": (_req, n) => (n === 0 ? toolCall("fetch_official_page", { url: "https://www.americanexpress.com/en-gb/credit-cards/platinum-card/", query: "guest" }) : text("ok")),
+      synthesise: () => composed({ picks: [{ ref: "S1" }] }),
+    });
+    const history = [{ role: "user" as const, text: "flights DEL to BOM on 2 Nov" }, { role: "assistant" as const, text: "Here are flights." }];
+    const { result, tracer } = await testOrchestrator({ llm }).orchestrator.handle("Can I bring a guest into Priority Pass with Amex Platinum UK?", { history });
+    expect(result.conversationUse).toBe("new_request");
+    expect(eventsOf(tracer.events, "delegation").map((e) => e.agent)).toEqual(["benefits"]);
+  });
+
+  it("refines the last search when a follow-up only changes preferences", async () => {
+    const kiwi = await fakeKiwi();
+    cleanup = kiwi.close;
+    const llm = new ScriptedLlm({
+      classify: () => classification({ intents: ["flight_search"], confidence: 0.95, travel_task: "Business class flights from Delhi to Mumbai on 2026-11-02 for 2 passengers, prices in INR" }),
+      "agent:flight": (req, n) => (n === 0 ? toolCall("search_flights", { origin: "DEL", destination: "BOM", departureDate: "2026-11-02", adults: 2, cabinClass: "business", currency: "INR" }) : text("ok")),
+      synthesise: () => composed({ picks: [{ ref: "F1" }] }),
+    });
+    const history = [
+      { role: "user" as const, text: "find delhi bombay flight ticket for 2 person for 2nd november" },
+      { role: "assistant" as const, text: "Found several non-stop flights from Delhi to Mumbai on 2 Nov." },
+    ];
+    const { result } = await testOrchestrator({ llm, kiwi: kiwi.connection }).orchestrator.handle("I want the currency in inr and find me business class ticket", { history });
+    expect(result.status).toBe("answered");
+    expect(kiwi.received[0]).toMatchObject({ flyFrom: "DEL", flyTo: "BOM", adults: 2, cabinClass: "C", currency: "INR" });
+    expect(llm.calls.find((c) => c.purpose === "agent:flight")!.messages[1]!.content).toContain("prices in INR");
   });
 
   it("rejects empty and over-long messages without calling the model", async () => {

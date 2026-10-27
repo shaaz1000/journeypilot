@@ -1,11 +1,16 @@
-import type { AgentName, FinalStatus, PolicyOutcome } from "../src/schemas.js";
+import type { AgentName, ChatTurn, ConversationUse, FinalStatus, PolicyOutcome } from "../src/schemas.js";
 
 export interface EvalCase {
   id: string;
   /** What behaviour this case protects. */
   purpose: string;
   message: string;
+  /** Earlier turns, for cases that test follow-ups. */
+  history?: ChatTurn[];
   expect: {
+    conversationUse?: ConversationUse;
+    /** Arguments the named tool must have been called with at least once. */
+    toolArgs?: { tool: string; args: Record<string, unknown> };
     /** Acceptable policy outcomes from the trace. */
     policy: PolicyOutcome[];
     /** Exact set of agents that must be delegated to (empty means none may run). */
@@ -74,6 +79,30 @@ export const CASES: EvalCase[] = [
     purpose: "A flight request without a date gets a plain question before any agent runs.",
     message: "find me a bombay delhi ticket",
     expect: { policy: ["clarify"], agents: [], status: ["clarify"], answerIncludes: [["which date"]], answerExcludes: ["specialist", "failed", "tool"] },
+  },
+  {
+    id: "follow-up-refine",
+    purpose: "A follow-up that only changes currency and cabin keeps the earlier route, date and travellers.",
+    history: [
+      { role: "user", text: `find delhi bombay flight ticket for 2 person on ${d45}` },
+      { role: "assistant", text: `Here are non-stop flights from Delhi to Mumbai on ${d45} for two adults, cheapest first.` },
+    ],
+    message: "I want the currency in inr and find me business class ticket",
+    expect: {
+      conversationUse: "continue", policy: ["allow"], agents: ["flight"], requiredTools: ["search_flights"], mcp: true,
+      toolArgs: { tool: "search_flights", args: { currency: "INR", cabinClass: "business", adults: 2, departureDate: d45 } },
+      answerIncludes: [["INR"]],
+    },
+  },
+  {
+    id: "topic-switch",
+    purpose: "An unrelated new question after a flight search starts fresh and runs only the agent it needs.",
+    history: [
+      { role: "user", text: `flights from London to Barcelona on ${d30}` },
+      { role: "assistant", text: `Here are flights from London to Barcelona on ${d30}.` },
+    ],
+    message: "Separately, does the UK Amex Platinum card let me bring a guest into Priority Pass lounges?",
+    expect: { conversationUse: "new_request", policy: ["allow"], agents: ["benefits"], requiredTools: ["fetch_official_page"], citations: true },
   },
   {
     id: "direct-injection",

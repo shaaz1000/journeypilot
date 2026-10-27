@@ -17,6 +17,13 @@ describe("redaction", () => {
     expect(redactString(input)).not.toContain(leaked);
   });
 
+  it("keeps generated identifiers intact but still masks IDs that look personal", () => {
+    const out = redact({ conversationId: "3f2a9c1e-0000-4000-8000-000000000001", traceId: "5d1c2e8a-4511-4c33-9a7f-112233445566", passportId: "GB123456789" });
+    expect(out.conversationId).toBe("3f2a9c1e-0000-4000-8000-000000000001");
+    expect(out.traceId).toBe("5d1c2e8a-4511-4c33-9a7f-112233445566");
+    expect(out.passportId).not.toContain("123456789");
+  });
+
   it("masks configured secret values exactly", () => {
     expect(redactString("value=supersecretvalue", { secrets: ["supersecretvalue"] })).toBe("value=[REDACTED_SECRET]");
   });

@@ -1,6 +1,6 @@
 import { runSpecialist, type SpecialistConfig } from "../agents/specialist.js";
 import type { LlmClient } from "../llm/types.js";
-import type { AgentName, Citation, FinalAnswer, FinalStatus, PolicyDecision, RequiredDetail, SpecialistResult } from "../schemas.js";
+import { MAX_HISTORY_TURNS, type AgentName, type ChatTurn, type Citation, type FinalAnswer, type FinalStatus, type PolicyDecision, type RequiredDetail, type SpecialistResult } from "../schemas.js";
 import type { ToolGateway } from "../tools/gateway.js";
 import type { Tracer } from "../trace/tracer.js";
 import { classify } from "./classifier.js";
@@ -22,16 +22,20 @@ export class Orchestrator {
   constructor(private readonly deps: OrchestratorDeps) {}
 
   /**
-   * Handles one message. `previousMessage` is the earlier message when this one answers a clarifying
-   * question, so "15 November" can complete "a Bombay to Delhi ticket".
+   * Handles one message. `history` holds the conversation so far, so "15 November" can complete
+   * "a Bombay to Delhi ticket" and "in INR, business class" can refine the last search.
    */
-  async handle(message: string, options: { previousMessage?: string } = {}): Promise<{ result: FinalAnswer; tracer: Tracer }> {
+  async handle(message: string, options: { history?: ChatTurn[]; conversationId?: string } = {}): Promise<{ result: FinalAnswer; tracer: Tracer }> {
     const tracer = this.deps.newTracer();
     const rootSpan = tracer.newSpanId();
     const started = performance.now();
-    const previousMessage = options.previousMessage?.trim().slice(0, MAX_MESSAGE_CHARS) || undefined;
-    tracer.emit("request", { message, chars: message.length, previousMessage }, { spanId: rootSpan });
+    const history = (options.history ?? [])
+      .slice(-MAX_HISTORY_TURNS)
+      .map((turn) => ({ role: turn.role, text: turn.text.trim().slice(0, MAX_MESSAGE_CHARS) }))
+      .filter((turn) => turn.text);
+    tracer.emit("request", { message, chars: message.length, conversationId: options.conversationId, history }, { spanId: rootSpan });
 
+    let conversationUse: FinalAnswer["conversationUse"] = "new_request";
     const finish = (
       status: FinalStatus,
       answer: string,
@@ -41,6 +45,7 @@ export class Orchestrator {
         requestId: tracer.requestId,
         traceId: tracer.traceId,
         status,
+        conversationUse,
         answer,
         body: extra.body ?? answer,
         agentsUsed: extra.agentsUsed ?? [],
@@ -74,16 +79,18 @@ export class Orchestrator {
     // 1. Classify and plan. Any failure here fails closed: no agent or tool runs.
     let raw: unknown;
     try {
-      raw = await classify(this.deps.llm, tracer, trimmed, rootSpan, previousMessage);
+      raw = await classify(this.deps.llm, tracer, trimmed, rootSpan, history);
     } catch (error) {
       tracer.emit("policy", { outcome: "refuse_malformed", reason: `classifier unavailable: ${String(error)}`, agents: [] }, { parentSpanId: rootSpan });
       return finish("failed", "JourneyPilot could not process your request right now because the language model is unavailable. Please try again shortly.");
     }
     const decision = decidePolicy(raw);
     const classification = raw as Record<string, unknown> | null;
+    // Only a validated classification with real history can claim to continue the conversation.
+    if (decision.outcome !== "refuse_malformed" && history.length > 0 && classification?.conversation_use === "continue") conversationUse = "continue";
     tracer.emit(
       "classification",
-      { valid: decision.outcome !== "refuse_malformed", intents: classification?.intents, confidence: classification?.confidence, travelTask: classification?.travel_task, missingDetails: classification?.missing_details, unsupportedPortion: classification?.unsupported_portion },
+      { valid: decision.outcome !== "refuse_malformed", conversationUse: classification?.conversation_use, historyTurns: history.length, intents: classification?.intents, confidence: classification?.confidence, travelTask: classification?.travel_task, missingDetails: classification?.missing_details, unsupportedPortion: classification?.unsupported_portion },
       { parentSpanId: rootSpan },
     );
     tracer.emit("policy", { outcome: decision.outcome, reason: decision.reason, agents: decision.agents, declinedPortion: decision.declinedPortion, missingDetails: decision.missingDetails }, { parentSpanId: rootSpan });
