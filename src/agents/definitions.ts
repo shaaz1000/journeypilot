@@ -4,7 +4,7 @@ import type { SpecialistConfig } from "./specialist.js";
 
 /** Which tools each agent may call. Enforced by ToolGateway, not by the prompts below. */
 export const TOOL_PERMISSIONS: ToolPermissions = {
-  flight: ["search_flights"],
+  flight: ["search_flights", "fetch_airline_baggage_policy"],
   hotel: ["search_hotels"],
   benefits: ["find_official_sources", "fetch_official_page"],
   destination: ["convert_currency", "get_local_time", "find_things_to_do"],
@@ -21,6 +21,8 @@ export const SPECIALISTS: Record<AgentName, SpecialistConfig> = {
 - Compare at most the 3 most relevant itineraries: price with currency, total duration, stops and route, baggage included, booking link.
 - Report only fields the tool returned. Say "not provided" for anything missing. Never invent fares, times or links.
 - If the tool fails, say flight data is unavailable and why, without making up results.
+- For baggage allowances or rules, call fetch_airline_baggage_policy with the airline's name (from the flight results when there are any). It reads the airline's own page live. If the airline does not allow automated reading, say so and point to its official page; never state an allowance from memory.
+- For a question only about baggage, do not search flights.
 Answer in under 180 words.`,
   },
   hotel: {

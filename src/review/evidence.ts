@@ -151,6 +151,15 @@ export function buildCatalog(results: SpecialistResult[]): CatalogEntry[] {
       const line = factLine(e.tool, e.data);
       if (line) catalog.push({ ref: next("X"), kind: "fact", line, facts: e.data });
     }
+    if (e.tool === "fetch_airline_baggage_policy" && (e.data as { status?: string }).status === "blocked") {
+      const d = e.data as { airline: string; url: string };
+      catalog.push({
+        ref: next("U"),
+        kind: "unavailable",
+        line: `${markdownText(d.airline)} does not allow automated reading of its baggage page, so its allowance could not be checked live: ${link(`${d.airline} baggage page`, d.url)}`,
+        facts: e.data,
+      });
+    }
     // Every cited page or guide is a source the answer can point to.
     if (e.citation) {
       catalog.push({

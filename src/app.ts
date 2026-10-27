@@ -4,8 +4,10 @@ import type { AppConfig } from "./config.js";
 import { NvidiaEmbedder } from "./llm/embeddings.js";
 import { NvidiaClient } from "./llm/nvidia.js";
 import type { LlmClient } from "./llm/types.js";
+import { PlaywrightPageReader } from "./mcp/browser.js";
 import { McpConnection } from "./mcp/connection.js";
 import { Orchestrator } from "./orchestrator/orchestrator.js";
+import { createAirlineBaggageTool } from "./tools/baggage.js";
 import { createFetchOfficialPageTool, findOfficialSourcesTool } from "./tools/benefits.js";
 import { createFlightSearchTool, findFlightSearchTool } from "./tools/flights.js";
 import { ToolGateway } from "./tools/gateway.js";
@@ -84,21 +86,24 @@ export async function createApp(config: AppConfig, overrides: AppOverrides = {})
   };
   await connect().catch(() => undefined);
 
+  // Second MCP integration: a headless browser, started on first use only.
+  const browser = new PlaywrightPageReader({ timeoutMs: 45_000 });
   const embedder = new NvidiaEmbedder({ apiKey: config.NVIDIA_API_KEY, baseUrl: config.NVIDIA_BASE_URL, model: config.NVIDIA_EMBED_MODEL, timeoutMs: 15_000 });
   const gateway = new ToolGateway(
     [
       createFlightSearchTool({ connect, serverName: "kiwi", timeoutMs: config.MCP_TIMEOUT_MS }),
+      createAirlineBaggageTool(browser, embedder),
       searchHotelsTool,
       findOfficialSourcesTool,
       createCurrencyTool(),
       createLocalTimeTool(),
       createThingsToDoTool(),
       findRightsSourcesTool,
-      createFetchRightsPageTool(fetch, embedder),
+      createFetchRightsPageTool(fetch, embedder, browser),
       planLayoverTool,
       createCityTransportTool(),
       findVisaSourcesTool,
-      createFetchVisaPageTool(fetch, embedder),
+      createFetchVisaPageTool(fetch, embedder, browser),
       createFetchOfficialPageTool(fetch, 20_000, embedder),
     ],
     TOOL_PERMISSIONS,
@@ -121,7 +126,7 @@ export async function createApp(config: AppConfig, overrides: AppOverrides = {})
 
   // Closing the HTTP transport can wait on an open SSE stream; never let shutdown hang on it.
   const close = async () => {
-    await Promise.all(sinks.map((sink) => sink.close?.()));
+    await Promise.all([...sinks.map((sink) => sink.close?.()), browser.close()]);
     await Promise.race([connection?.close(), new Promise((resolve) => setTimeout(resolve, 2000).unref())]);
   };
   return { orchestrator, mcp, cloud, close };

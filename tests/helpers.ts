@@ -11,6 +11,8 @@ import { createFlightSearchTool } from "../src/tools/flights.js";
 import { ToolGateway } from "../src/tools/gateway.js";
 import { createCityTransportTool, createCurrencyTool, createLocalTimeTool, createThingsToDoTool } from "../src/tools/destination.js";
 import { searchHotelsTool } from "../src/tools/hotels.js";
+import { createAirlineBaggageTool } from "../src/tools/baggage.js";
+import { BlockedPageError, type PageReader, type RenderedPage } from "../src/mcp/browser.js";
 import { createFetchRightsPageTool, findRightsSourcesTool } from "../src/tools/rights.js";
 import { createFetchVisaPageTool, findVisaSourcesTool, planLayoverTool } from "../src/tools/transit.js";
 import { Tracer, type TraceEvent } from "../src/trace/tracer.js";
@@ -179,12 +181,41 @@ export interface TestAppOptions {
   llm: LlmClient;
   kiwi?: McpConnection | null;
   fetchImpl?: typeof fetch;
+  browser?: PageReader;
 }
 
-export function testOrchestrator({ llm, kiwi = null, fetchImpl }: TestAppOptions) {
+const AKASA_TEXT = [
+  "Baggage allowance",
+  "Check-in baggage: Saver fares include 15 kg of check-in baggage per passenger on domestic flights.",
+  "Cabin baggage: one piece up to 7 kg, plus one personal item such as a laptop bag.",
+  "Excess baggage can be pre-booked online in 3 kg, 5 kg and 10 kg blocks, cheaper than paying at the airport.",
+].join("\n");
+
+/** Stand-in for the Playwright browser: serves canned pages and refuses the URLs listed in `blocked`. */
+export class FakeBrowser implements PageReader {
+  readonly visited: string[] = [];
+
+  constructor(
+    private readonly pages: Record<string, RenderedPage> = { "https://www.akasaair.com/baggage": { url: "https://www.akasaair.com/baggage", title: "Baggage | Akasa Air", text: AKASA_TEXT } },
+    private readonly blocked: string[] = ["https://www.emirates.com/uk/english/before-you-fly/baggage/checked-baggage/"],
+  ) {}
+
+  async read(url: string): Promise<RenderedPage> {
+    this.visited.push(url);
+    if (this.blocked.includes(url)) throw new BlockedPageError(url, 'the site showed "access denied"');
+    const page = this.pages[url];
+    if (!page) throw new BlockedPageError(url, "the page had almost no readable text");
+    return page;
+  }
+
+  async close(): Promise<void> {}
+}
+
+export function testOrchestrator({ llm, kiwi = null, fetchImpl, browser }: TestAppOptions) {
   const gateway = new ToolGateway(
     [
       createFlightSearchTool({ connect: async () => { if (!kiwi) throw new Error("test: no MCP connection"); return kiwi; }, serverName: "kiwi", timeoutMs: 2000 }),
+      createAirlineBaggageTool(browser ?? new FakeBrowser()),
       searchHotelsTool,
       findOfficialSourcesTool,
       createCurrencyTool(destinationFetch),

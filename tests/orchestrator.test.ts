@@ -327,6 +327,31 @@ describe("orchestrator: layovers", () => {
   });
 });
 
+describe("orchestrator: airline baggage", () => {
+  it("answers a baggage question from the airline's own page without asking for a route", async () => {
+    const llm = new ScriptedLlm({
+      classify: () => classification({ intents: ["airline_baggage"], confidence: 0.9, travel_task: "Checked baggage allowance on Akasa Air", missing_details: ["origin", "destination", "departure_date"] }),
+      "agent:flight": (_req, n) => (n === 0 ? toolCall("fetch_airline_baggage_policy", { airline: "Akasa Air" }) : text("15 kg check-in.")),
+      synthesise: () => composed({ summary: "Akasa Air's Saver fares include 15 kg of check-in baggage.", picks: [{ ref: "S1", comment: "Cabin baggage is one piece up to 7 kg plus a personal item." }] }),
+    });
+    const { result, tracer } = await testOrchestrator({ llm }).orchestrator.handle("What's the baggage allowance on Akasa Air?");
+    expect(result.status).toBe("answered");
+    expect(result.citations[0]?.url).toBe("https://www.akasaair.com/baggage");
+    expect(eventsOf(tracer.events, "tool")[0]).toMatchObject({ tool: "fetch_airline_baggage_policy", source: "mcp", server: "playwright", status: "ok" });
+  });
+
+  it("links the official page when the airline blocks automated reading", async () => {
+    const llm = new ScriptedLlm({
+      classify: () => classification({ intents: ["airline_baggage"], confidence: 0.9, travel_task: "Emirates checked baggage allowance" }),
+      "agent:flight": (_req, n) => (n === 0 ? toolCall("fetch_airline_baggage_policy", { airline: "Emirates" }) : text("Could not read Emirates' page.")),
+      synthesise: () => composed({ summary: "Emirates' baggage page could not be read automatically.", picks: [{ ref: "U1" }] }),
+    });
+    const { result } = await testOrchestrator({ llm }).orchestrator.handle("How much baggage can I take on Emirates?");
+    expect(result.body).toContain("Emirates does not allow automated reading of its baggage page");
+    expect(result.body).not.toContain("kg");
+  });
+});
+
 describe("orchestrator: failures and grounding", () => {
   it("explains unavailable flight data without fabricating results", async () => {
     const kiwi = await fakeKiwi("error");

@@ -93,14 +93,28 @@ export function htmlToPassages(html: string): { title: string; passages: string[
   walk(document.children);
   flush();
 
-  // Merge fragments too short to stand alone (menu items, labels) into their neighbour, then cap length.
+  return { title, passages: mergePassages(raw) };
+}
+
+/** Merges fragments too short to stand alone (menu items, labels) into their neighbour, then caps length. */
+function mergePassages(raw: string[]): string[] {
   const merged: string[] = [];
   for (const text of raw) {
     const last = merged[merged.length - 1];
     if (last !== undefined && (last.length < MIN_PASSAGE || text.length < MIN_PASSAGE) && last.length + text.length < MAX_PASSAGE) merged[merged.length - 1] = `${last} ${text}`;
     else merged.push(text);
   }
-  return { title, passages: merged.flatMap(splitLong) };
+  return merged.flatMap(splitLong);
+}
+
+/** Passages from a browser's visible text, where each line is one rendered block. */
+export function textToPassages(text: string): string[] {
+  return mergePassages(text.split("\n").map(normaliseSpace).filter(Boolean));
+}
+
+/** Passages long enough to carry content; fewer than two means the page needs a browser to render. */
+export function substantialPassages(passages: string[]): number {
+  return passages.filter((p) => p.length >= MIN_PASSAGE).length;
 }
 
 /** Word-level fallback when embeddings are unavailable: words come from the platform's word segmenter. */

@@ -13,6 +13,7 @@ const AGENT_FOR_INTENT: Record<TravelIntent, AgentName | null> = {
   destination_info: "destination",
   passenger_rights: "rights",
   transit_visa: "transit",
+  airline_baggage: "flight",
   // Planning is the orchestrator's own synthesis step; it needs at least one data intent alongside it.
   trip_planning: null,
 };
@@ -43,9 +44,9 @@ export function decidePolicy(raw: unknown): PolicyDecision {
   if (agents.length === 0) {
     return { outcome: "clarify", agents: [], reason: "planning request without flight, hotel or lounge details", declinedPortion };
   }
-  // Only details that belong to a selected agent count; a stray hotel slot on a flight search is ignored.
+  // Only details the requested searches need count: a baggage question needs no route, a flight search does.
   const relevant = c.missing_details.filter(
-    (d) => (FLIGHT_DETAILS.has(d) && agents.includes("flight")) || (HOTEL_DETAILS.has(d) && agents.includes("hotel")) || (TRANSIT_DETAILS.has(d) && agents.includes("transit")),
+    (d) => (FLIGHT_DETAILS.has(d) && c.intents.includes("flight_search")) || (HOTEL_DETAILS.has(d) && c.intents.includes("hotel_search")) || (TRANSIT_DETAILS.has(d) && c.intents.includes("transit_visa")),
   );
   if (relevant.length > 0) {
     return { outcome: "clarify", agents: [], reason: `missing ${relevant.join(", ")}`, declinedPortion, missingDetails: [...new Set(relevant)] };

@@ -13,7 +13,7 @@ export const AGENT_LABELS: Record<AgentName, string> = {
   transit: "transit and visa information",
 };
 
-export const TRAVEL_INTENTS = ["flight_search", "hotel_search", "lounge_benefits", "destination_info", "passenger_rights", "transit_visa", "trip_planning"] as const;
+export const TRAVEL_INTENTS = ["flight_search", "hotel_search", "lounge_benefits", "destination_info", "passenger_rights", "transit_visa", "airline_baggage", "trip_planning"] as const;
 export type TravelIntent = (typeof TRAVEL_INTENTS)[number];
 
 /** One earlier turn of the conversation, sent by the chat client with each new message. */

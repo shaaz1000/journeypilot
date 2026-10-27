@@ -48,6 +48,16 @@ export class McpConnection {
 
   /** Calls a discovered tool and returns its JSON text content, mapping protocol failures to ToolErrors. */
   async callJson(name: string, args: Record<string, unknown>, signal: AbortSignal, timeoutMs: number): Promise<unknown> {
+    const text = await this.callText(name, args, signal, timeoutMs);
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new ToolError(`${this.serverName} returned non-JSON content`, "malformed_output", false);
+    }
+  }
+
+  /** Calls a discovered tool and returns its text content as is. */
+  async callText(name: string, args: Record<string, unknown>, signal: AbortSignal, timeoutMs: number): Promise<string> {
     let result: Awaited<ReturnType<Client["callTool"]>>;
     try {
       if (this.stale) await this.reconnect();
@@ -66,11 +76,7 @@ export class McpConnection {
       ? result.content.filter((c): c is { type: "text"; text: string } => c.type === "text").map((c) => c.text).join("")
       : "";
     if (result.isError) throw new ToolError(`${this.serverName} returned an error: ${text.slice(0, 300)}`, "provider", false);
-    try {
-      return JSON.parse(text);
-    } catch {
-      throw new ToolError(`${this.serverName} returned non-JSON content`, "malformed_output", false);
-    }
+    return text;
   }
 
   async close(): Promise<void> {
