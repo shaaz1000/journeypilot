@@ -24,6 +24,13 @@ describe("redaction", () => {
     expect(out.passportId).not.toContain("123456789");
   });
 
+  it("never exempts digit-only values or fields outside the generated-ID list", () => {
+    const out = redact({ conversationId: "4111111111111111", cardId: "3f2a9c1e-0000-4000-8000-000000000001", requestId: "4111 1111 1111 1111" });
+    expect(out.conversationId).not.toContain("4111111111111111");
+    expect(out.cardId).toContain("[REDACTED");
+    expect(out.requestId).not.toContain("4111");
+  });
+
   it("masks configured secret values exactly", () => {
     expect(redactString("value=supersecretvalue", { secrets: ["supersecretvalue"] })).toBe("value=[REDACTED_SECRET]");
   });

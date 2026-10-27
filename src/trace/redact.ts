@@ -30,15 +30,27 @@ export function redactString(input: string, options: RedactOptions = {}): string
   return output;
 }
 
-const ID_CHARS = new Set("0123456789abcdefABCDEF-_");
+/** Fields that hold identifiers this app generates itself; nothing else is exempt from masking. */
+const GENERATED_ID_KEYS = new Set(["traceId", "requestId", "spanId", "parentSpanId", "conversationId", "toolCallId"]);
+const HEX = new Set("0123456789abcdef");
+const UUID_GROUPS = [8, 4, 4, 4, 12];
+
+/** A canonical UUID (8-4-4-4-12 hex) with at least one letter, so a digits-only value is never exempt. */
+function isUuid(value: string): boolean {
+  const groups = value.toLowerCase().split("-");
+  return (
+    groups.length === UUID_GROUPS.length &&
+    groups.every((g, i) => g.length === UUID_GROUPS[i] && [...g].every((c) => HEX.has(c))) &&
+    [...value.toLowerCase()].some((c) => c >= "a" && c <= "f")
+  );
+}
 
 /**
- * Generated identifiers (UUIDs and similar, under keys ending in "id") contain digit runs that look like
- * card or phone numbers. They are kept intact so traces stay linkable; anything with other characters,
- * such as a passport number, is still masked.
+ * Generated UUIDs contain digit runs that look like card or phone numbers. They are kept intact so traces
+ * stay linkable, but only under the app's own ID fields and only in strict UUID form.
  */
 function isGeneratedId(key: string, value: string): boolean {
-  return key.toLowerCase().endsWith("id") && value.length <= 64 && [...value].every((c) => ID_CHARS.has(c));
+  return GENERATED_ID_KEYS.has(key) && isUuid(value);
 }
 
 /** Deep-redacts any JSON-like value. Values under sensitive keys are dropped entirely. */
