@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { redact } from "./redact.js";
+import { redact, redactString } from "./redact.js";
 
 export type TraceKind = "request" | "classification" | "policy" | "delegation" | "agent" | "tool" | "model" | "review" | "final";
 
@@ -96,6 +96,8 @@ export class Tracer {
   payload(value: unknown): unknown {
     if (this.rawPayloads) return value;
     const text = typeof value === "string" ? value : JSON.stringify(value);
-    return text === undefined ? null : { preview: text.slice(0, 300), chars: text.length };
+    if (text === undefined) return null;
+    // Redact the whole text before truncating so a cut can never leave a partial secret behind.
+    return { preview: redactString(text, { secrets: this.options.secrets }).slice(0, 300), chars: text.length };
   }
 }

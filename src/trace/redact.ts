@@ -1,4 +1,9 @@
-const SENSITIVE_KEY = /^(api[-_]?key|authorization|token|access[-_]?token|secret|password|cookie)$/i;
+// Matched against the key lower-cased with "-" and "_" removed. Token counts (promptTokens) are not secrets.
+const SENSITIVE_KEY = /^(auth|token)$|apikey|authorization|accesstoken|refreshtoken|bearer|secret|password|passwd|cookie|session|credential|privatekey/;
+
+function isSensitiveKey(key: string): boolean {
+  return SENSITIVE_KEY.test(key.toLowerCase().replace(/[-_]/g, ""));
+}
 
 const PATTERNS: [RegExp, string][] = [
   [/\bBearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer [REDACTED]"],
@@ -32,7 +37,7 @@ export function redact<T>(value: T, options: RedactOptions = {}): T {
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, inner] of Object.entries(value)) {
-      out[key] = SENSITIVE_KEY.test(key) ? "[REDACTED]" : redact(inner, options);
+      out[key] = isSensitiveKey(key) ? "[REDACTED]" : redact(inner, options);
     }
     return out as T;
   }
