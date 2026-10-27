@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JourneyPilot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script type="module" src="/assets/chat.js"></script>
+</head>
+<body class="chat">
+  <header class="sign">
+    <div class="sign__inner">
+      <span class="sign__mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg>
+      </span>
+      <span class="sign__name">JourneyPilot</span>
+      <span class="sign__scope">Flights, hotels and airport lounges</span>
+    </div>
+  </header>
+
+  <main class="column">
+    <section id="intro" class="intro">
+      <h1>Where are you headed?</h1>
+      <p>Compare live flight fares, look at hotel options and check what your card gets you in airport lounges. Answers come with their sources.</p>
+      <div class="examples">
+        <button type="button" data-example="Compare the cheapest flights from London to Barcelona next month for one adult">Cheapest flights London to Barcelona next month</button>
+        <button type="button" data-example="Can I bring a guest into a Priority Pass lounge with the UK Amex Platinum card?">Amex Platinum lounge guest rules</button>
+        <button type="button" data-example="Find a hotel near Heathrow for 2 nights from the 10th of next month">Hotel near Heathrow for 2 nights</button>
+      </div>
+    </section>
+
+    <div id="thread" class="thread" aria-live="polite"></div>
+  </main>
+
+  <form id="composer" class="composer">
+    <div class="composer__inner">
+      <label for="message" class="visually-hidden">Your travel question</label>
+      <textarea id="message" rows="2" maxlength="2000" placeholder="Ask about a flight, a hotel or lounge access" autofocus></textarea>
+      <button id="send" type="submit">Ask</button>
+    </div>
+  </form>
+</body>
+</html>

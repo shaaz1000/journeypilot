@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JourneyPilot admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script type="module" src="/assets/admin.js"></script>
+</head>
+<body class="admin">
+  <header class="sign sign--admin">
+    <div class="sign__inner">
+      <span class="sign__name">JourneyPilot admin</span>
+      <span id="runtime" class="sign__scope"></span>
+    </div>
+  </header>
+
+  <form id="gate" class="gate" hidden>
+    <h1>Admin access</h1>
+    <p>Request traces include what travellers asked and every tool call. Paste the admin token printed when the server started.</p>
+    <label for="token">Admin token</label>
+    <input id="token" type="password" autocomplete="off" required>
+    <p class="gate__error" role="alert"></p>
+    <button type="submit">Open traces</button>
+  </form>
+
+  <div id="console" class="console" hidden>
+    <aside class="side">
+      <div class="side__tools">
+        <label for="search" class="visually-hidden">Search requests</label>
+        <input id="search" type="search" placeholder="Search messages or request IDs">
+        <label class="toggle"><input id="live" type="checkbox" checked> Refresh automatically</label>
+      </div>
+      <nav id="requests" class="requests" aria-label="Logged requests"></nav>
+    </aside>
+    <main id="detail" class="detail">
+      <p class="muted">Select a request to see its full flow.</p>
+    </main>
+  </div>
+</body>
+</html>
