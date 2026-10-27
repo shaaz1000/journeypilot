@@ -11,7 +11,8 @@ const ConfigSchema = z.object({
   NVIDIA_API_KEY: z.string().min(1, "NVIDIA_API_KEY is required (free key from https://build.nvidia.com)"),
   NVIDIA_BASE_URL: z.url().default("https://integrate.api.nvidia.com/v1"),
   NVIDIA_MODEL: z.string().min(1).default("nvidia/nemotron-3.5-lightning-30b-a3b"),
-  NVIDIA_THINKING: booleanFlag("false"),
+  // Thinking is logged end to end. Turning it off makes replies roughly five times faster.
+  NVIDIA_THINKING: booleanFlag("true"),
   NVIDIA_THINKING_TOKENS: z.coerce.number().int().positive().default(2048),
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   KIWI_MCP_URL: z.url().default("https://mcp.kiwi.com"),

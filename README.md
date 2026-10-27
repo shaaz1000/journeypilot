@@ -17,6 +17,7 @@ Requires Node.js 21.7 or later (the code uses `process.loadEnvFile`).
 ```bash
 npm install
 cp .env.example .env          # then set NVIDIA_API_KEY
+npm start                     # chat at http://127.0.0.1:3000, admin console at /admin
 npm run ask -- --trace "Compare flights from London to New York on 2026-12-10"
 npm run ask                   # interactive mode
 npm test                      # offline tests, no network or key needed
@@ -41,10 +42,35 @@ Which models your key can call varies by account. On 2026-10-27, with a free-tie
 To check your own key: `curl -s https://integrate.api.nvidia.com/v1/models -H "Authorization: Bearer $NVIDIA_API_KEY"`.
 
 Two settings matter with this endpoint:
-- Reasoning is turned off (`chat_template_kwargs.enable_thinking=false`); otherwise the thinking tokens use up the budget before the model makes a tool call.
+- Reasoning (`NVIDIA_THINKING`) is on by default, so the model's thinking is captured and logged. Each call gets an extra 2,048-token budget, because without it the thinking used up the budget before the model made its tool call. With thinking on, a live eval pass had the same routing and grounding results, but median latency rose from 9.8 s to 55 s. Set `NVIDIA_THINKING=false` for faster answers.
 - Structured output uses a forced function call validated with zod, because `response_format: json_schema` produced degenerate output.
 
 There is no silent fallback to another provider.
+
+### Web UI
+
+`npm start` serves two pages on 127.0.0.1 only:
+
+- **Chat** (`/`) is the traveller's view. It shows the answer, its sources, anything to be aware of, and a request reference. Tool calls and traces never reach this page or its API.
+- **Admin** (`/admin`) asks for the admin token printed at startup (or set `ADMIN_TOKEN`). It lists every logged request, including CLI runs. For each one it shows the response sent and the end-to-end flow as a timeline with duration bars. Select a step to see:
+  - for a model call: the full prompt, the tools offered and chosen, and the model's thinking;
+  - for a tool call: its arguments, results and errors;
+  - for the policy and review steps: the decision and its reason.
+
+The browser code is TypeScript, bundled with esbuild when the server starts.
+
+### Cloud tracing for the team (Langfuse)
+
+Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` from a [Langfuse Cloud](https://cloud.langfuse.com) project (the free Hobby plan is enough). The same redacted events are then also sent to Langfuse:
+
+| JourneyPilot step | In Langfuse |
+|-------------------|-------------|
+| One request | One trace, with the traveller's message as input and the final answer as output |
+| Each model call | A generation: full prompt, thinking, output, tool calls, token usage |
+| Each agent and each tool call | Nested spans; failures are marked at ERROR level |
+| Classification, policy, delegation, review | Events |
+
+Anyone you invite to the Langfuse project, as admin, member or viewer, can see every trace. Export runs in the background and never blocks or fails a request.
 
 ## Architecture
 
@@ -130,16 +156,22 @@ Each request writes JSONL events to `logs/<date>.jsonl`. Events share a `traceId
 
 Run `npm run ask -- --trace "..."` to print the trace.
 
+With the defaults, the trace holds:
+- every prompt sent to the model, with the tools offered and the tool chosen;
+- the model's thinking (`NVIDIA_THINKING=true`);
+- tool arguments and full results;
+- the final answer.
+
 Before any event is written, the following are redacted:
 - the configured API key and other key patterns
 - bearer tokens and fields with sensitive names
 - emails, phone numbers, card numbers and passport-like IDs
 
-Result payloads are logged as a 300-character preview unless `LOG_RAW_PAYLOADS=true`; secrets are redacted either way. Files older than `LOG_RETENTION_DAYS` (default 7) are deleted at startup. If a log write fails, a warning goes to stderr and the request continues; policy decisions are made before logging and do not depend on it.
+Set `LOG_RAW_PAYLOADS=false` to keep only 300-character previews of prompts and results; secrets are redacted either way. Files older than `LOG_RETENTION_DAYS` (default 7) are deleted at startup. If a log write fails, a warning goes to stderr and the request continues; policy decisions are made before logging and do not depend on it.
 
 ## Testing
 
-`npm test` runs 89 offline tests in about 4 seconds, with a scripted model and a real MCP server over an in-memory transport:
+`npm test` runs 101 offline tests in about 5 seconds, with a scripted model and a real MCP server over an in-memory transport:
 
 | File | Covers |
 |------|--------|
@@ -149,6 +181,8 @@ Result payloads are logged as a 300-character preview unless `LOG_RAW_PAYLOADS=t
 | `tests/benefits.test.ts` | Domain allowlist (lookalike domains, credentials in URLs, metadata IPs), redirect checks, excerpts |
 | `tests/reviewer.test.ts` | Grounded and invented prices, echoed arguments, cross-result differences, links, demo labels, stale sources |
 | `tests/redaction.test.ts` | Secret and personal-data masking, redaction before truncation, sink failure, retention |
+| `tests/langfuse.test.ts` | Mapping to Langfuse traces, generations and spans; redaction of what is sent; flush on completion; cloud outages |
+| `tests/server.test.ts` | Chat API returns no trace data, admin token required, cross-origin and DNS-rebinding refusal, bundled pages |
 | `tests/orchestrator.test.ts` | Refusal before any agent runs, mixed requests, multi-agent trips, tool failure, injected page content, reminder path, trace correlation |
 
 ## Evaluation
@@ -191,7 +225,7 @@ Each was fixed in its own commit.
 ## What I would change for production
 
 - Move the agents onto Mastra (or similar) for workflows, memory and deployment, keeping the gateway and policy gate as the enforcement layer.
-- Ship traces to OpenTelemetry, with dashboards for policy outcomes, tool error rates, review replacements and latency per agent.
+- Build Langfuse dashboards and alerts for policy outcomes, tool error rates, review replacements and latency per agent. Add single sign-on, and an admin login for the web console in place of the shared token.
 - Use a stronger model, or a second classifier, for the policy decision, and calibrate the confidence threshold against labelled traffic.
 - Add a model-based judge for claim-level support in benefit answers, calibrated against human labels, alongside the deterministic checks.
 - Real hotel inventory and authenticated provider access, with response caching and rate limiting per provider.
