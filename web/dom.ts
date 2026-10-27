@@ -30,8 +30,16 @@ export function safeLink(href: string, label?: string): HTMLElement {
   return el("a", { href: url.toString(), target: "_blank", rel: "noopener noreferrer" }, label ?? href);
 }
 
-// Raw HTML in the text is escaped (html: false); markdown-it also refuses javascript: and data: links.
-const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
+// Raw HTML is escaped (html: false) and bare URLs are not auto-linked; only http(s) link targets are accepted.
+const markdown = new MarkdownIt({ html: false, linkify: false, breaks: true });
+markdown.validateLink = (url: string) => {
+  try {
+    const protocol = new URL(url).protocol;
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+};
 const defaultLinkOpen = markdown.renderer.rules.link_open ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
 markdown.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   tokens[idx]!.attrSet("target", "_blank");

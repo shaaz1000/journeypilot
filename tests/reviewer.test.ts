@@ -45,6 +45,15 @@ describe("evidence catalog", () => {
   });
 });
 
+describe("link safety", () => {
+  it("percent-encodes characters that could break out of a Markdown link and rejects other schemes", async () => {
+    const { markdownUrl } = await import("../src/review/evidence.js");
+    expect(markdownUrl("https://kiwi.com/u/a)(b[c]")).toBe("https://kiwi.com/u/a%29%28b%5Bc%5D");
+    expect(markdownUrl("javascript:alert(1)")).toBeNull();
+    expect(markdownUrl("not a url")).toBeNull();
+  });
+});
+
 describe("structural checks", () => {
   it("flags references to results no tool returned", () => {
     const rs = [result("flight", [flights])];

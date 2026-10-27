@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { tracedChat } from "../llm/traced.js";
 import type { LlmClient, ToolSpec } from "../llm/types.js";
-import { buildCatalog, structuralFindings, supportedIds, type CatalogEntry, type Statement, type Verdict } from "../review/evidence.js";
+import { buildCatalog, plainText, structuralFindings, supportedIds, type CatalogEntry, type Statement, type Verdict } from "../review/evidence.js";
 import type { SpecialistResult } from "../schemas.js";
 import type { Tracer } from "../trace/tracer.js";
 
@@ -107,14 +107,22 @@ export async function composeAnswer(llm: LlmClient, tracer: Tracer, task: string
     findings.push("answer could not be written; showing results only");
   }
 
-  const chosen = composed?.picks.filter((p) => byRef.has(p.ref)) ?? [];
+  // Each result is shown at most once, so each comment has exactly one statement id.
+  const seen = new Set<string>();
+  const chosen = (composed?.picks ?? []).filter((p) => byRef.has(p.ref) && !seen.has(p.ref) && seen.add(p.ref));
   const unknownRefs = (composed?.picks ?? []).filter((p) => !byRef.has(p.ref)).map((p) => p.ref);
   const picks = chosen.length ? chosen : defaultPicks(catalog).map((ref) => ({ ref, comment: "" }));
 
+  // Everything the model wrote is made link-free before it is judged or shown.
+  const summary = plainText(composed?.summary.trim() ?? "");
+  const comments = picks.map((p) => plainText(p.comment.trim()));
+  const noteTexts = (composed?.notes ?? []).map((n) => plainText(n.trim()));
+  const followUp = plainText(composed?.follow_up_question.trim() ?? "");
+
   const statements: Statement[] = [];
-  if (composed?.summary.trim()) statements.push({ id: "summary", text: composed.summary.trim() });
-  for (const p of picks) if (p.comment.trim()) statements.push({ id: `pick:${p.ref}`, text: p.comment.trim() });
-  composed?.notes.forEach((n, i) => n.trim() && statements.push({ id: `note:${i}`, text: n.trim() }));
+  if (summary) statements.push({ id: "summary", text: summary });
+  comments.forEach((c, i) => c && statements.push({ id: `pick:${i}`, text: c }));
+  noteTexts.forEach((n, i) => n && statements.push({ id: `note:${i}`, text: n }));
 
   let verdicts: Verdict[] | null = statements.length ? null : [];
   if (statements.length) {
@@ -157,17 +165,17 @@ export async function composeAnswer(llm: LlmClient, tracer: Tracer, task: string
   findings.push(...removed, ...structural);
 
   const parts: string[] = [];
-  if (kept.has("summary")) parts.push(composed!.summary.trim());
-  const lines = picks.map((p) => {
+  if (kept.has("summary")) parts.push(summary);
+  const lines = picks.map((p, i) => {
     const entry = byRef.get(p.ref)!;
-    const comment = kept.has(`pick:${p.ref}`) ? p.comment.trim() : "";
+    const comment = kept.has(`pick:${i}`) ? comments[i]! : "";
     if (entry.kind === "source") return comment ? `- ${comment} (${entry.line})` : `- See ${entry.line}`;
     return comment ? `- ${entry.line} ${comment}` : `- ${entry.line}`;
   });
   if (lines.length) parts.push(lines.join("\n"));
-  const notes = (composed?.notes ?? []).map((n, i) => (kept.has(`note:${i}`) ? n.trim() : "")).filter(Boolean);
+  const notes = noteTexts.map((n, i) => (kept.has(`note:${i}`) ? n : "")).filter(Boolean);
   if (notes.length) parts.push(notes.map((n) => `- ${n}`).join("\n"));
-  if (composed?.follow_up_question.trim()) parts.push(composed.follow_up_question.trim());
+  if (followUp) parts.push(followUp);
   if (parts.length === 0) parts.push("I couldn't find results for that right now. Please try again in a moment.");
 
   // Removed sentences never reach the traveller, so they mark the answer as replaced rather than failed.

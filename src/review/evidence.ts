@@ -50,8 +50,29 @@ function formatLocal(iso: string | undefined): string {
   return Number.isNaN(date.getTime()) ? iso : when.format(date).replace(",", "");
 }
 
-/** Square brackets would turn provider text into Markdown links, so they are swapped for round ones. */
-const markdownText = (s: string) => s.replaceAll("[", "(").replaceAll("]", ")");
+/**
+ * Text that must never become a link or markup: square brackets (Markdown links) and angle brackets
+ * (autolinks) are swapped for look-alike characters. Used for provider text and for everything the model writes.
+ */
+export const plainText = (s: string) => s.replaceAll("[", "(").replaceAll("]", ")").replaceAll("<", "‹").replaceAll(">", "›");
+const markdownText = plainText;
+
+/** A link target safe inside Markdown: http(s) only, with characters that could end the link percent-encoded. */
+export function markdownUrl(raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  return url.toString().replaceAll("(", "%28").replaceAll(")", "%29").replaceAll("[", "%5B").replaceAll("]", "%5D").replaceAll("<", "%3C").replaceAll(">", "%3E").replaceAll(" ", "%20");
+}
+
+const link = (label: string, raw: string) => {
+  const url = markdownUrl(raw);
+  return url ? `[${markdownText(label)}](${url})` : markdownText(label);
+};
 
 function flightLine(it: Itinerary): string {
   const stops = it.stops === 0 ? "direct" : `${it.stops} stop${it.stops === 1 ? "" : "s"}`;
@@ -59,7 +80,7 @@ function flightLine(it: Itinerary): string {
   const bags = typeof it.baggageIncluded === "object" ? (it.baggageIncluded.checkedBag ? "checked bag included" : "no checked bag") : "baggage not provided";
   // Segment labels are "<airline> <flight number>"; dropping the last word leaves the airline.
   const airlines = [...new Set((it.outbound?.flights ?? []).map((f) => f.split(" ").slice(0, -1).join(" ")).filter(Boolean))].join(", ");
-  return `**${it.price} ${it.currency}**: ${route}, ${stops}, ${it.duration}, departs ${formatLocal(it.outbound?.departure)}${airlines ? `, ${markdownText(airlines)}` : ""}, ${bags}. [Book on Kiwi.com](${it.bookingUrl})`;
+  return `**${it.price} ${it.currency}**: ${route}, ${stops}, ${it.duration}, departs ${formatLocal(it.outbound?.departure)}${airlines ? `, ${markdownText(airlines)}` : ""}, ${bags}. ${link("Book on Kiwi.com", it.bookingUrl)}`;
 }
 
 function hotelLine(h: Hotel): string {
@@ -82,7 +103,7 @@ export function buildCatalog(results: SpecialistResult[]): CatalogEntry[] {
       catalog.push({
         ref: `S${++s}`,
         kind: "source",
-        line: `[${markdownText(e.citation.title)}](${e.citation.url})`,
+        line: link(e.citation.title, e.citation.url),
         facts: { title: e.citation.title, url: e.citation.url, excerpts: data.excerpts ?? [] },
         citation: e.citation,
       });
@@ -121,7 +142,9 @@ export function structuralFindings(results: SpecialistResult[], catalog: Catalog
 
 /** Statements the judge did not explicitly support are treated as unsupported (fail closed). */
 export function supportedIds(statements: Statement[], verdicts: Verdict[] | null): { kept: Set<string>; findings: string[] } {
-  const byId = new Map((verdicts ?? []).map((v) => [v.id, v]));
+  // An id with more than one verdict is ambiguous and counts as unsupported.
+  const byId = new Map<string, Verdict>();
+  for (const v of verdicts ?? []) byId.set(v.id, byId.has(v.id) ? { id: v.id, supported: false, reason: "conflicting verdicts for one statement" } : v);
   const kept = new Set<string>();
   const findings: string[] = [];
   for (const s of statements) {
