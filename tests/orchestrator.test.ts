@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { ChatRequest } from "../src/llm/types.js";
-import { AMEX_PAGE, classification, eventsOf, fakeKiwi, pageResponse, recordedKiwi, ScriptedLlm, TEST_SECRET, testOrchestrator, text, toolCall } from "./helpers.js";
+import { AMEX_PAGE, classification, composed, eventsOf, fakeKiwi, judge, pageResponse, recordedKiwi, ScriptedLlm, TEST_SECRET, testOrchestrator, text, toolCall } from "./helpers.js";
 
 let cleanup: (() => Promise<void>) | undefined;
 afterEach(async () => {
@@ -95,7 +95,7 @@ describe("orchestrator: delegation and tool use", () => {
     const llm = new ScriptedLlm({
       classify: () => classification({ intents: ["flight_search"], confidence: 0.95, travel_task: FLIGHT_TASK }),
       "agent:flight": (_req, toolResults) => (toolResults === 0 ? toolCall("search_flights", flightArgs) : text(`Cheapest: ${cheapest.price} GBP.`)),
-      synthesise: () => text(`- Cheapest option: ${cheapest.price} GBP, book at ${cheapest.bookingUrl}`),
+      synthesise: () => composed({ summary: "Here are the cheapest fares for that day.", picks: [{ ref: "F1", comment: "the cheapest option" }] }),
     });
     const { result, tracer } = await testOrchestrator({ llm, kiwi: kiwi.connection }).orchestrator.handle("Cheapest London to New York flight on 10 Dec?");
 
@@ -108,13 +108,17 @@ describe("orchestrator: delegation and tool use", () => {
     expect(tools[0]).toMatchObject({ agent: "flight", tool: "search_flights", source: "mcp", server: "kiwi", status: "ok" });
     expect(kiwi.received).toHaveLength(1);
     expect(result.answer).toContain("live search results from Kiwi.com");
+    // Price and link come from the tool data, rendered by code.
+    expect(result.body).toContain(`**${cheapest.price} GBP**`);
+    expect(result.body).toContain(`(${cheapest.bookingUrl})`);
+    expect(result.body).toContain("the cheapest option");
   });
 
   it("shows each specialist only its own tools", async () => {
     const llm = new ScriptedLlm({
       classify: () => classification({ intents: ["hotel_search"], confidence: 0.9, travel_task: "Hotels in London 2026-12-10 to 2026-12-13" }),
       "agent:hotel": (_req, n) => (n === 0 ? toolCall("search_hotels", { city: "London", checkIn: "2026-12-10", checkOut: "2026-12-13" }) : text("done")),
-      synthesise: () => text("Bridgeview Hotel Heathrow (demo data): 142 GBP per night, 426 GBP total for 3 nights."),
+      synthesise: () => composed({ summary: "Here are hotels in London for your dates.", picks: [{ ref: "H1", comment: "breakfast included" }] }),
     });
     const { result } = await testOrchestrator({ llm }).orchestrator.handle("Hotel in London for 3 nights from 10 Dec");
     const hotelCall = llm.calls.find((c) => c.purpose === "agent:hotel")!;
@@ -131,7 +135,7 @@ describe("orchestrator: delegation and tool use", () => {
         if (!reminded) return text("I'm not able to search hotels right now.");
         return n === 0 ? toolCall("search_hotels", { city: "Dubai", checkIn: "2026-11-26", checkOut: "2026-11-29" }) : text("Creekside, demo data.");
       },
-      synthesise: () => text("Creekside Stopover Hotel (demo): 520 AED per night, 1 560 AED total."),
+      synthesise: () => composed({ summary: "One hotel matches in Dubai.", picks: [{ ref: "H1" }] }),
     });
     const { result, tracer } = await testOrchestrator({ llm }).orchestrator.handle("Hotel in Dubai 26-29 Nov");
     expect(result.status).toBe("answered");
@@ -169,7 +173,7 @@ describe("orchestrator: delegation and tool use", () => {
         n === 0 ? toolCall("find_official_sources", { query: "amex platinum lounge guest" })
         : n === 1 ? toolCall("fetch_official_page", { url: "https://www.americanexpress.com/en-gb/credit-cards/platinum-card/", query: "guest fee" })
         : text("One guest is included; extra guests cost GBP 24 per visit."),
-      synthesise: () => text("- Cardmember plus one guest get Priority Pass access.\n- Additional guests: GBP 24 per guest per visit."),
+      synthesise: () => composed({ summary: "Yes, you can bring one guest.", picks: [{ ref: "S1", comment: "The cardmember and one guest get Priority Pass access; additional guests cost GBP 24 per visit." }] }),
     });
     const { result, tracer } = await testOrchestrator({ llm }).orchestrator.handle("Amex Platinum lounge guest rules? Also write a poem about cats.");
     expect(result.status).toBe("answered");
@@ -188,7 +192,7 @@ describe("orchestrator: delegation and tool use", () => {
       classify: () => classification({ intents: ["trip_planning", "flight_search", "hotel_search"], confidence: 0.9, travel_task: "LHR to JFK 2026-12-10, hotel in New York 2026-12-10 to 2026-12-12" }),
       "agent:flight": (_req, n) => (n === 0 ? toolCall("search_flights", flightArgs) : text("found flights")),
       "agent:hotel": (_req, n) => (n === 0 ? toolCall("search_hotels", { city: "New York", checkIn: "2026-12-10", checkOut: "2026-12-12" }) : text("found hotels")),
-      synthesise: () => text(`Flight from ${cheapest.price} GBP; Jamaica Bay Airport Inn (demo) 168 USD per night, 336 USD total.`),
+      synthesise: () => composed({ summary: "Here is a flight and a hotel for your trip.", picks: [{ ref: "F1" }, { ref: "H1" }] }),
     });
     const { result, tracer } = await testOrchestrator({ llm, kiwi: kiwi.connection }).orchestrator.handle("Plan London to NYC 10-12 Dec with a hotel");
     expect(result.agentsUsed.sort()).toEqual(["flight", "hotel"]);
@@ -204,7 +208,7 @@ describe("orchestrator: failures and grounding", () => {
     const llm = new ScriptedLlm({
       classify: () => classification({ intents: ["flight_search"], confidence: 0.95, travel_task: FLIGHT_TASK }),
       "agent:flight": (_req, n) => (n < 2 ? toolCall("search_flights", flightArgs) : text("Flight search is unavailable right now.")),
-      synthesise: () => text("Flight search is unavailable at the moment, so I can't compare fares."),
+      synthesise: () => composed({ summary: "Flight search is unavailable right now, so please try again shortly." }),
     });
     const { result, tracer } = await testOrchestrator({ llm, kiwi: kiwi.connection }).orchestrator.handle("Flights LHR to JFK 10 Dec");
     expect(result.status).toBe("failed");
@@ -215,19 +219,37 @@ describe("orchestrator: failures and grounding", () => {
     expect(eventsOf(tracer.events, "agent")[0]).toMatchObject({ agent: "flight", status: "failed" });
   });
 
-  it("replaces a synthesis that invents a price with an evidence digest", async () => {
+  it("removes a sentence the judge cannot support and keeps the data-rendered results", async () => {
     const kiwi = await fakeKiwi();
     cleanup = kiwi.close;
     const llm = new ScriptedLlm({
       classify: () => classification({ intents: ["flight_search"], confidence: 0.95, travel_task: FLIGHT_TASK }),
       "agent:flight": (_req, n) => (n === 0 ? toolCall("search_flights", flightArgs) : text("ok")),
-      synthesise: () => text("Fares start from just 99 GBP!"),
+      synthesise: () => composed({ summary: "Fares start from just 99 GBP!", picks: [{ ref: "F1", comment: "cheapest" }] }),
+      judge: judge(["summary"]),
     });
     const { result, tracer } = await testOrchestrator({ llm, kiwi: kiwi.connection }).orchestrator.handle("Flights LHR to JFK 10 Dec");
     expect(result.review).toMatchObject({ replaced: true, passed: true });
     expect(result.answer).not.toContain("99 GBP");
     expect(result.answer).toContain(`${cheapest.price} GBP`);
-    expect(eventsOf(tracer.events, "review")[0]?.findings).toEqual(["price 99 does not appear in any tool result"]);
+    expect(result.answer).toContain("cheapest");
+    expect(eventsOf(tracer.events, "review")[0]?.findings).toEqual(['removed summary ("Fares start from just 99 GBP!"): not stated in the evidence']);
+  });
+
+  it("shows only data-rendered results when the judge is unavailable", async () => {
+    const kiwi = await fakeKiwi();
+    cleanup = kiwi.close;
+    const llm = new ScriptedLlm({
+      classify: () => classification({ intents: ["flight_search"], confidence: 0.95, travel_task: FLIGHT_TASK }),
+      "agent:flight": (_req, n) => (n === 0 ? toolCall("search_flights", flightArgs) : text("ok")),
+      synthesise: () => composed({ summary: "Great fares today.", picks: [{ ref: "F1", comment: "cheapest" }, { ref: "F99" }] }),
+      judge: () => { throw new Error("judge model unavailable"); },
+    });
+    const { result } = await testOrchestrator({ llm, kiwi: kiwi.connection }).orchestrator.handle("Flights LHR to JFK 10 Dec");
+    expect(result.body).not.toContain("Great fares today");
+    expect(result.body).toContain(`**${cheapest.price} GBP**`);
+    expect(result.review.replaced).toBe(true);
+    expect(result.review.findings).toEqual(expect.arrayContaining([expect.stringContaining("grounding check unavailable"), "answer referred to F99, which no tool returned"]));
   });
 
   it("treats injected instructions in a fetched page as data", async () => {
@@ -241,7 +263,7 @@ describe("orchestrator: failures and grounding", () => {
         // Simulate a model that falls for the injection and reaches for a tool outside its role.
         : n === 1 ? toolCall("search_flights", flightArgs)
         : text("Guests are charged GBP 24 per visit."),
-      synthesise: () => text("Priority Pass guests are charged GBP 24 per visit."),
+      synthesise: () => composed({ summary: "Priority Pass guests are charged GBP 24 per visit.", picks: [{ ref: "S1" }] }),
     });
     const { result, tracer } = await testOrchestrator({ llm, fetchImpl: async () => pageResponse(injected) }).orchestrator.handle("Priority Pass guest fee?");
 
@@ -264,7 +286,7 @@ describe("orchestrator: trace", () => {
       "agent:benefits": (_req, n) =>
         n === 0 ? toolCall("fetch_official_page", { url: "https://www.americanexpress.com/en-gb/credit-cards/platinum-card/", query: "guest" })
         : text("One guest included."),
-      synthesise: () => text("Cardmember plus one guest."),
+      synthesise: () => composed({ summary: "The cardmember can bring one guest.", picks: [{ ref: "S1" }] }),
     });
     const { result, tracer } = await testOrchestrator({ llm, fetchImpl: async () => pageResponse(AMEX_PAGE) }).orchestrator.handle(
       `Amex lounge guests? My email is jo@example.com and my key is ${TEST_SECRET}`,

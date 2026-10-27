@@ -1,86 +1,79 @@
 import { describe, expect, it } from "vitest";
-import { evidenceDigest, moneyAmounts, reviewAnswer } from "../src/review/evidence.js";
-import type { Citation, EvidenceRecord, SpecialistResult } from "../src/schemas.js";
+import { buildCatalog, structuralFindings, supportedIds } from "../src/review/evidence.js";
+import type { EvidenceRecord, SpecialistResult } from "../src/schemas.js";
 
 const flights: EvidenceRecord = {
   toolCallId: "tc_1", agent: "flight", tool: "search_flights", source: "mcp", server: "kiwi", dataSource: "live",
-  data: { query: { maxPrice: 999 }, itineraries: [
-    { price: 256, currency: "GBP", duration: "14h 15m", stops: 2, route: "LHR > AMS > SHJ", bookingUrl: "https://kiwi.com/u/aaa" },
-    { price: 276, currency: "GBP", duration: "13h 35m", stops: 2, route: "LHR > WAW > SHJ", bookingUrl: "https://kiwi.com/u/bbb" },
+  data: { itineraries: [
+    { price: 109, currency: "GBP", duration: "2h 20m", stops: 0, outbound: { route: "BOM > DEL", departure: "2026-11-02T06:05:00", flights: ["IndiGo 6E2001"] }, baggageIncluded: { checkedBag: 0 }, bookingUrl: "https://kiwi.com/u/aaa" },
+    { price: 276, currency: "GBP", duration: "13h 35m", stops: 2, outbound: { route: "LHR > WAW > SHJ" }, baggageIncluded: { checkedBag: 1 }, bookingUrl: "https://kiwi.com/u/bbb" },
   ] },
 };
 const hotels: EvidenceRecord = {
   toolCallId: "tc_2", agent: "hotel", tool: "search_hotels", source: "local", dataSource: "demo_fixture",
-  data: { hotels: [{ name: "Bridgeview", nightlyRate: 142, totalStayCost: 426, currency: "GBP", nights: 3 }] },
+  data: { hotels: [{ name: "Bridgeview [Heathrow]", area: "Heathrow T5", nightlyRate: 142, totalStayCost: 426, currency: "GBP", nights: 3, breakfastIncluded: true, cancellation: "Free cancellation" }] },
 };
 const now = Date.now();
 const page: EvidenceRecord = {
   toolCallId: "tc_3", agent: "benefits", tool: "fetch_official_page", source: "local", dataSource: "official_page",
-  citation: { url: "https://www.prioritypass.com/en-GB/conditions-of-use", title: "Conditions", retrievedAt: new Date(now).toISOString() },
-  data: { url: "https://www.prioritypass.com/en-GB/conditions-of-use", excerpts: ["Guests are charged GBP 24 per visit."] },
+  citation: { url: "https://www.prioritypass.com/en-GB/conditions-of-use", title: "Conditions of Use", retrievedAt: new Date(now).toISOString() },
+  data: { excerpts: ["Guests are charged GBP 24 per visit."] },
 };
-const result = (agent: SpecialistResult["agent"], evidence: EvidenceRecord[]): SpecialistResult => ({ agent, status: "ok", summary: "", evidence, errors: [] });
-const cites = (rs: SpecialistResult[]): Citation[] => rs.flatMap((r) => r.evidence.flatMap((e) => (e.citation ? [e.citation] : [])));
+const registryOnly: EvidenceRecord = { ...page, tool: "find_official_sources", citation: undefined, data: { sources: [] } };
+const result = (agent: SpecialistResult["agent"], evidence: EvidenceRecord[], status: SpecialistResult["status"] = "ok"): SpecialistResult => ({ agent, status, summary: "", evidence, errors: [] });
 
-describe("evidence reviewer", () => {
-  it("parses money in several formats", () => {
-    expect(moneyAmounts("£256, 276 GBP, USD 1,234.50 and $9")).toEqual([256, 276, 1234.5, 9]);
-    expect(moneyAmounts("total 1 560 AED, or 1\u202f560 AED")).toEqual([1560, 1560]);
+describe("evidence catalog", () => {
+  it("numbers every returned result and renders its line from the data", () => {
+    const catalog = buildCatalog([result("flight", [flights]), result("hotel", [hotels]), result("benefits", [page])]);
+    expect(catalog.map((c) => c.ref)).toEqual(["F1", "F2", "H1", "S1"]);
+    expect(catalog[0]!.line).toBe("**109 GBP**: BOM to DEL, direct, 2h 20m, departs 2 Nov 06:05, IndiGo, no checked bag. [Book on Kiwi.com](https://kiwi.com/u/aaa)");
+    expect(catalog[1]!.line).toContain("2 stops");
+    expect(catalog[1]!.line).toContain("checked bag included");
   });
 
-  it("passes an answer whose prices and links come from tool results", () => {
+  it("always labels hotel rows as demo data and keeps nightly and total cost apart", () => {
+    const [hotel] = buildCatalog([result("hotel", [hotels])]);
+    expect(hotel!.line).toContain("demo data");
+    expect(hotel!.line).toContain("142 GBP per night, 426 GBP in total for 3 nights");
+    expect(hotel!.line).not.toContain("[Heathrow]"); // provider text cannot create Markdown links
+  });
+
+  it("cites only pages that were actually fetched", () => {
+    const catalog = buildCatalog([result("benefits", [registryOnly, page])]);
+    expect(catalog).toHaveLength(1);
+    expect(catalog[0]).toMatchObject({ ref: "S1", line: "[Conditions of Use](https://www.prioritypass.com/en-GB/conditions-of-use)" });
+  });
+});
+
+describe("structural checks", () => {
+  it("flags references to results no tool returned", () => {
     const rs = [result("flight", [flights])];
-    expect(reviewAnswer("Cheapest is £256 (https://kiwi.com/u/aaa); £276 adds a cabin bag, a £20 premium.", rs, [], now)).toEqual({ passed: true, findings: [] });
-  });
-
-  it("flags an invented price", () => {
-    const review = reviewAnswer("Fares start at £199.", [result("flight", [flights])], [], now);
-    expect(review.findings).toEqual(["price 199 does not appear in any tool result"]);
-  });
-
-  it("does not let echoed query arguments ground a price", () => {
-    expect(reviewAnswer("Budget fares under £999.", [result("flight", [flights])], [], now).passed).toBe(false);
-  });
-
-  it("does not accept differences across different tool results", () => {
-    // 276 - 142 = 134 mixes a flight fare and a hotel rate.
-    const rs = [result("flight", [flights]), result("hotel", [hotels])];
-    expect(reviewAnswer("Demo hotel saves £134.", rs, [], now).passed).toBe(false);
-  });
-
-  it("reads links wrapped in markdown code spans", () => {
-    expect(reviewAnswer("Book at `https://kiwi.com/u/aaa` for £256.", [result("flight", [flights])], [], now).passed).toBe(true);
-  });
-
-  it("flags links that were not returned exactly", () => {
-    const review = reviewAnswer("Book at https://kiwi.com/u/aaa-fake", [result("flight", [flights])], [], now);
-    expect(review.findings[0]).toMatch(/link .* does not appear/);
-  });
-
-  it("requires demo hotel data to be labelled in the body", () => {
-    const rs = [result("hotel", [hotels])];
-    expect(reviewAnswer("Bridgeview is £142 a night, £426 in total.", rs, [], now).findings).toContain("demo hotel data is not labelled as demo");
-    expect(reviewAnswer("Bridgeview (demo data) is £142 a night, £426 in total.", rs, [], now).passed).toBe(true);
+    expect(structuralFindings(rs, buildCatalog(rs), ["F9"], now)).toEqual(["answer referred to F9, which no tool returned"]);
   });
 
   it("requires a fetched official page behind a benefits answer", () => {
-    const registryOnly: EvidenceRecord = { ...page, tool: "find_official_sources", citation: undefined, data: { sources: [] } };
-    expect(reviewAnswer("You can bring a guest.", [result("benefits", [registryOnly])], [], now).findings).toContain("benefit answer has no fetched official page behind it");
-    const rs = [result("benefits", [page])];
-    expect(reviewAnswer("Guests cost GBP 24 per visit.", rs, cites(rs), now).passed).toBe(true);
+    const rs = [result("benefits", [registryOnly])];
+    expect(structuralFindings(rs, buildCatalog(rs), [], now)).toContain("benefit answer has no fetched official page behind it");
   });
 
-  it("flags stale or undated sources", () => {
+  it("flags stale sources", () => {
     const rs = [result("benefits", [page])];
-    const stale: Citation[] = [{ ...page.citation!, retrievedAt: "yesterday-ish" }];
-    expect(reviewAnswer("ok", rs, stale, now).passed).toBe(false);
-    expect(reviewAnswer("ok", rs, cites(rs), now + 2 * 86_400_000).passed).toBe(false);
+    expect(structuralFindings(rs, buildCatalog(rs), [], now + 2 * 86_400_000)[0]).toMatch(/stale/);
+  });
+});
+
+describe("judge verdicts", () => {
+  const statements = [{ id: "summary", text: "Fares start at 109 GBP." }, { id: "note:0", text: "Save 30 GBP by flying early." }];
+
+  it("keeps only statements the judge explicitly supports", () => {
+    const { kept, findings } = supportedIds(statements, [{ id: "summary", supported: true, reason: "" }, { id: "note:0", supported: false, reason: "no such saving in the evidence" }]);
+    expect([...kept]).toEqual(["summary"]);
+    expect(findings).toEqual(['removed note:0 ("Save 30 GBP by flying early."): no such saving in the evidence']);
   });
 
-  it("builds a digest using only tool output", () => {
-    const digest = evidenceDigest([result("flight", [flights]), result("hotel", [hotels]), result("benefits", [page])]);
-    expect(digest).toContain("256 GBP");
-    expect(digest).toContain("demo data");
-    expect(digest).toContain("GBP 24 per visit");
+  it("fails closed when a verdict is missing or the judge is unavailable", () => {
+    expect([...supportedIds(statements, [{ id: "summary", supported: true, reason: "" }]).kept]).toEqual(["summary"]);
+    expect(supportedIds(statements, [{ id: "summary", supported: true, reason: "" }]).findings[0]).toContain("no verdict returned");
+    expect(supportedIds(statements, null).kept.size).toBe(0);
   });
 });

@@ -32,7 +32,24 @@ export function classification(fields: Partial<{ intents: string[]; confidence: 
   return toolCall("classify_request", { intents: [], confidence: 0.9, travel_task: "", unsupported_portion: "", ...fields });
 }
 
-type Script = (request: ChatRequest, toolResultsSoFar: number) => ChatResponse | Promise<ChatResponse>;
+export type Script = (request: ChatRequest, toolResultsSoFar: number) => ChatResponse | Promise<ChatResponse>;
+
+/** The orchestrator's structured answer: prose plus references to results that code renders. */
+export function composed(fields: { summary?: string; picks?: { ref: string; comment?: string }[]; notes?: string[]; follow_up_question?: string }): ChatResponse {
+  return toolCall("compose_answer", { summary: "", picks: [], notes: [], follow_up_question: "", ...fields });
+}
+
+/** A grounding judge that supports every statement except the ids listed in `reject`. */
+export function judge(reject: string[] = []): Script {
+  return (request) => {
+    const content = String(request.messages[1]?.content ?? "");
+    const open = "<statements>";
+    const statements = JSON.parse(content.slice(content.indexOf(open) + open.length, content.indexOf("</statements>"))) as { id: string }[];
+    return toolCall("record_verdicts", {
+      verdicts: statements.map((s) => ({ id: s.id, supported: !reject.includes(s.id), reason: reject.includes(s.id) ? "not stated in the evidence" : "stated in the evidence" })),
+    });
+  };
+}
 
 /** Deterministic stand-in for the model. Scripts are keyed by the request purpose recorded in traces. */
 export class ScriptedLlm implements LlmClient {
@@ -40,7 +57,12 @@ export class ScriptedLlm implements LlmClient {
   readonly model = "scripted-model";
   readonly calls: ChatRequest[] = [];
 
-  constructor(private readonly scripts: Record<string, Script>) {}
+  private readonly scripts: Record<string, Script>;
+
+  /** The grounding judge defaults to supporting everything; tests that exercise it pass their own. */
+  constructor(scripts: Record<string, Script>) {
+    this.scripts = { judge: judge(), ...scripts };
+  }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     this.calls.push(structuredClone(request));
