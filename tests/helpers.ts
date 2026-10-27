@@ -56,9 +56,36 @@ export class ScriptedLlm implements LlmClient {
 
 export type KiwiBehaviour = "ok" | "error" | "non_json";
 
-/** A real MCP server over an in-memory transport, advertising a flight tool under a different name. */
+/**
+ * A real MCP server over an in-memory transport, advertising a flight tool under a different name.
+ * Each connection gets its own server instance, as a remote server gives each session its own state.
+ */
 export async function fakeKiwi(behaviour: KiwiBehaviour = "ok") {
   const received: Record<string, unknown>[] = [];
+  const servers: McpServer[] = [];
+  const serverTransports: InMemoryTransport[] = [];
+  const newTransport = () => {
+    const server = buildFakeKiwi(behaviour, received);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    void server.connect(serverTransport);
+    servers.push(server);
+    serverTransports.push(serverTransport);
+    return clientTransport;
+  };
+  const connection = await McpConnection.open("kiwi", newTransport, 5000);
+  return {
+    connection,
+    received,
+    /** Simulates the remote side expiring the current session. */
+    expireSession: async () => serverTransports[serverTransports.length - 1]!.close(),
+    close: async () => {
+      await connection.close();
+      await Promise.all(servers.map((s) => s.close()));
+    },
+  };
+}
+
+function buildFakeKiwi(behaviour: KiwiBehaviour, received: Record<string, unknown>[]): McpServer {
   const server = new McpServer({ name: "fake-kiwi", version: "1.0.0" });
   server.registerTool(
     "find-trips",
@@ -83,10 +110,7 @@ export async function fakeKiwi(behaviour: KiwiBehaviour = "ok") {
       return { content: [{ type: "text", text: JSON.stringify(recordedKiwi) }] };
     },
   );
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  const connection = await McpConnection.open("kiwi", clientTransport, 5000);
-  return { connection, received, close: async () => { await connection.close(); await server.close(); } };
+  return server;
 }
 
 export function pageResponse(html: string, status = 200, headers: Record<string, string> = {}): Response {

@@ -55,7 +55,7 @@ export async function createApp(config: AppConfig, overrides: AppOverrides = {})
   const mcp: McpStatus = { server: "kiwi", url: config.KIWI_MCP_URL, connected: false, discoveredTools: [] };
   let connection: McpConnection | null = null;
   try {
-    connection = await openWithRetry(() => McpConnection.open("kiwi", new StreamableHTTPClientTransport(new URL(config.KIWI_MCP_URL)), config.MCP_TIMEOUT_MS));
+    connection = await openWithRetry(() => McpConnection.open("kiwi", () => new StreamableHTTPClientTransport(new URL(config.KIWI_MCP_URL)), config.MCP_TIMEOUT_MS));
     mcp.connected = true;
     mcp.discoveredTools = connection.tools.map((t) => t.name);
     mcp.flightTool = findFlightSearchTool(connection.tools)?.name;

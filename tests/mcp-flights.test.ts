@@ -55,6 +55,16 @@ describe("Kiwi MCP integration", () => {
     expect(!result.ok && result.error.kind).toBe("malformed_output");
   });
 
+  it("opens a fresh session after the old one expires, so the retry succeeds", async () => {
+    const { kiwi, gateway } = await setup();
+    await kiwi.expireSession();
+    const tracer = new Tracer();
+    const result = await gateway.invoke("flight", "search_flights", args, tracer);
+    expect(result.ok).toBe(true);
+    expect(eventsOf(tracer.events, "tool")[0]).toMatchObject({ status: "ok", attempts: 2 });
+    expect(kiwi.connection.reconnects).toBe(1);
+  });
+
   it("rejects an unexpected result shape", () => {
     expect(() => condenseFlights({ currency: "GBP", itineraries: [{ price: "cheap" }] })).toThrow(/unexpected result shape/);
   });
