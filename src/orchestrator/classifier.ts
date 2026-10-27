@@ -14,12 +14,12 @@ Supported intents:
 - passenger_rights: what the law says and what the airline must do when a flight is delayed, cancelled or overbooked: care (meals, hotel), rebooking, refunds and compensation.
 - airline_baggage: an airline's baggage rules and allowances (checked bags, cabin bags, weights, extra bags). Needs no route or date.
 - transit_visa: layovers and connections: whether there is time to leave the airport and visit the city, and the visa or transit rules for doing so.
-- destination_info: things to see and do in a city or country, the local time somewhere, and converting an amount of money between currencies for travel.
+- destination_info: things to see and do in a city or country, the local time somewhere, and any currency conversion or exchange-rate question. Travellers rarely say why they want a conversion, so every conversion counts, even without travel words.
 - trip_planning: combining flights, hotels and lounges into an itinerary or travel budget. Always add the specific intents the plan needs as well.
 A layover question that also asks what to see in the city has both transit_visa and destination_info.
 
 Search preferences are part of the search they refine, never unsupported: currency to show prices in, cabin class, number of travellers, stops, departure times and budget.
-Everything else is unsupported: coding, general knowledge, entertainment, creative writing, health, legal, and financial advice not about travel benefits.
+Everything else is unsupported: coding, general knowledge, entertainment, creative writing, health, legal, and financial advice such as investments, stocks or loans (a currency conversion is not financial advice).
 
 Fields:
 - conversation_use: decide this first. "continue" when the message answers a question JourneyPilot asked, or changes or extends the latest request ("in INR", "business class", "what about the 3rd?", "make it 3 people", "and a hotel there", "lounges at that airport"). "new_request" when it is a different trip or question that does not depend on earlier turns, for example a new route, or a lounge question unrelated to the earlier search. Always "new_request" when there is no <conversation>.
@@ -49,22 +49,22 @@ export async function classify(llm: LlmClient, tracer: Tracer, message: string, 
     ? `<conversation>\n${history.map((turn) => `${turn.role === "user" ? "Traveller" : "JourneyPilot"}: ${turn.text}`).join("\n")}\n</conversation>\n`
     : "";
   const today = new Date().toISOString().slice(0, 10);
-  const response = await tracedChat(
-    llm,
-    tracer,
-    {
-      purpose: "classify",
-      messages: [
-        { role: "system", content: `${SYSTEM_PROMPT}\nToday's date is ${today}.` },
-        { role: "user", content: `${context}<user_message>\n${message}\n</user_message>` },
-      ],
-      tools: [CLASSIFY_TOOL],
-      toolChoice: { name: CLASSIFY_TOOL.name },
-      maxTokens: 400,
-      temperature: 0,
-    },
-    parentSpanId,
-  );
+  const request = {
+    purpose: "classify",
+    messages: [
+      { role: "system" as const, content: `${SYSTEM_PROMPT}\nToday's date is ${today}.` },
+      { role: "user" as const, content: `${context}<user_message>\n${message}\n</user_message>` },
+    ],
+    tools: [CLASSIFY_TOOL],
+    toolChoice: { name: CLASSIFY_TOOL.name },
+    maxTokens: 1000,
+    temperature: 0,
+  };
+  let response = await tracedChat(llm, tracer, request, parentSpanId);
+  // A reply cut off at the token limit (long thinking) gets one more attempt before failing closed.
+  if (response.finishReason === "length" && !response.toolCalls.some((c) => c.function.name === CLASSIFY_TOOL.name)) {
+    response = await tracedChat(llm, tracer, { ...request, purpose: "classify:retry" }, parentSpanId);
+  }
   const call = response.toolCalls.find((c) => c.function.name === CLASSIFY_TOOL.name);
   if (!call) return null;
   try {

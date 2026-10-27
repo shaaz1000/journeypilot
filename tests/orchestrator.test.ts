@@ -39,6 +39,16 @@ describe("orchestrator: domain restriction", () => {
     expect(eventsOf(tracer.events, "classification")[0]).toMatchObject({ valid: false });
   });
 
+  it("retries a classification cut off at the token limit once, then decides normally", async () => {
+    const llm = new ScriptedLlm({
+      classify: () => ({ content: '{\n  "', toolCalls: [], finishReason: "length" }),
+      "classify:retry": () => classification({ intents: [], confidence: 0.95, unsupported_portion: "stock picks" }),
+    });
+    const { result } = await testOrchestrator({ llm }).orchestrator.handle("Which stocks should I buy?");
+    expect(llm.purposes()).toEqual(["classify", "classify:retry"]);
+    expect(result.status).toBe("declined");
+  });
+
   it("fails closed when the classifier output breaks the schema", async () => {
     const llm = new ScriptedLlm({ classify: () => toolCall("classify_request", { intents: ["anything_goes"], confidence: 0.99 }) });
     const { result } = await testOrchestrator({ llm }).orchestrator.handle("Book me everything");
