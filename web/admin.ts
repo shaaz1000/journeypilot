@@ -73,7 +73,7 @@ gate.addEventListener("submit", (event) => {
 });
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-const chip = (status: string) => el("span", { class: `chip chip--${status}` }, status.replace("_", " "));
+const chip = (status: string) => el("span", { class: `chip chip--${status}` }, status.replaceAll("_", " "));
 
 function renderList(): void {
   const q = search.value.trim().toLowerCase();

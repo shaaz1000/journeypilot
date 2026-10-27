@@ -1,4 +1,9 @@
-/** Small DOM helpers. All text goes through textContent; nothing untrusted is ever parsed as HTML. */
+import MarkdownIt from "markdown-it";
+
+/**
+ * Small DOM helpers. Plain text goes through textContent. Answer text is Markdown rendered by markdown-it
+ * with raw HTML disabled, so nothing in it can become markup or script.
+ */
 type Child = Node | string | null | undefined | false;
 
 export function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, string> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
@@ -25,56 +30,19 @@ export function safeLink(href: string, label?: string): HTMLElement {
   return el("a", { href: url.toString(), target: "_blank", rel: "noopener noreferrer" }, label ?? href);
 }
 
-const INLINE = /(\*\*[^*]+\*\*|https?:\/\/[^\s)\]`]+)/g;
+// Raw HTML in the text is escaped (html: false); markdown-it also refuses javascript: and data: links.
+const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
+const defaultLinkOpen = markdown.renderer.rules.link_open ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+markdown.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+  tokens[idx]!.attrSet("target", "_blank");
+  tokens[idx]!.attrSet("rel", "noopener noreferrer");
+  return defaultLinkOpen(tokens, idx, options, env, self);
+};
 
-function inline(text: string): Node[] {
-  const nodes: Node[] = [];
-  let last = 0;
-  for (const match of text.matchAll(INLINE)) {
-    const token = match[0];
-    if (match.index! > last) nodes.push(document.createTextNode(text.slice(last, match.index)));
-    if (token.startsWith("**")) nodes.push(el("strong", {}, token.slice(2, -2)));
-    else {
-      const clean = token.replace(/[.,;:]+$/, "");
-      nodes.push(safeLink(clean));
-      if (clean.length < token.length) nodes.push(document.createTextNode(token.slice(clean.length)));
-    }
-    last = match.index! + token.length;
-  }
-  if (last < text.length) nodes.push(document.createTextNode(text.slice(last)));
-  return nodes;
-}
-
-/** Renders the model's light markdown (paragraphs, "- " bullets, nested bullets, **bold**, links) as DOM. */
+/** Renders the answer's Markdown (paragraphs, lists, bold, links) with markdown-it. */
 export function richText(text: string): HTMLElement {
   const root = el("div", { class: "rich" });
-  let list: HTMLUListElement | null = null;
-  let sublist: HTMLUListElement | null = null;
-  for (const raw of text.split("\n")) {
-    const bullet = raw.match(/^(\s*)[-*•]\s+(.*)$/);
-    if (bullet) {
-      const nested = bullet[1]!.length >= 2;
-      const item = el("li", {}, ...inline(bullet[2]!));
-      if (nested && list?.lastElementChild) {
-        if (!sublist) {
-          sublist = el("ul");
-          list.lastElementChild.append(sublist);
-        }
-        sublist.append(item);
-      } else {
-        if (!list) {
-          list = el("ul");
-          root.append(list);
-        }
-        sublist = null;
-        list.append(item);
-      }
-      continue;
-    }
-    list = null;
-    sublist = null;
-    if (raw.trim()) root.append(el("p", {}, ...inline(raw.trim())));
-  }
+  root.innerHTML = markdown.render(text);
   return root;
 }
 

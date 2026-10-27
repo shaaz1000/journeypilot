@@ -32,7 +32,7 @@ export interface OtlpSpan {
 }
 
 /** OTLP wants 32-hex trace IDs and 16-hex span IDs; ours are UUIDs and short UUID slices, so derive stable ones. */
-export const otelTraceId = (traceId: string) => traceId.replace(/-/g, "").padEnd(32, "0").slice(0, 32);
+export const otelTraceId = (traceId: string) => traceId.replaceAll("-", "").padEnd(32, "0").slice(0, 32);
 export const otelSpanId = (traceId: string, spanId: string) => createHash("sha256").update(`${traceId}:${spanId}`).digest("hex").slice(0, 16);
 
 const nanos = (iso: string) => `${BigInt(Date.parse(iso)) * 1_000_000n}`;
@@ -256,7 +256,8 @@ export class LangfuseSink implements TraceSink {
       ],
     };
     try {
-      const response = await this.fetchImpl(`${this.options.baseUrl.replace(/\/$/, "")}/api/public/otel/v1/traces`, {
+      const base = this.options.baseUrl.endsWith("/") ? this.options.baseUrl.slice(0, -1) : this.options.baseUrl;
+      const response = await this.fetchImpl(`${base}/api/public/otel/v1/traces`, {
         method: "POST",
         headers: { Authorization: this.auth, "Content-Type": "application/json", "x-langfuse-ingestion-version": "4" },
         body: JSON.stringify(body),

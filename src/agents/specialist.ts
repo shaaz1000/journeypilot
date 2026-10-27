@@ -20,7 +20,7 @@ const MAX_TOOL_RESULT_CHARS = 6000;
 
 /** JSON with <, > and & escaped, so tool content cannot close or forge the <tool_data> delimiter. */
 function safeJson(value: unknown): string {
-  return JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
+  return JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e").replaceAll("&", "\\u0026");
 }
 
 const UNTRUSTED_DATA_RULE =

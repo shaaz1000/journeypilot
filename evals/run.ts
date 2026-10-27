@@ -31,8 +31,7 @@ async function main(): Promise<void> {
   const cases = only ? CASES.filter((c) => c.id === only) : CASES;
   if (cases.length === 0) throw new Error(`no eval case named ${only}`);
 
-  // Raw payloads are needed for the excerpt-support grader; they stay in the local eval log directory.
-  const config = { ...loadConfig(), LOG_RAW_PAYLOADS: true };
+  const config = loadConfig();
   const app = await createApp(config, { sinks: [new JsonlFileSink(join(config.LOG_DIR, "eval"))] });
   console.log(`model ${config.NVIDIA_MODEL} | MCP ${app.mcp.server}: ${app.mcp.connected ? "connected" : app.mcp.error}\n`);
 
@@ -70,7 +69,7 @@ async function main(): Promise<void> {
   const passed = runs.filter((r) => r.passed).length;
   const checkStats = new Map<string, { passed: number; total: number }>();
   for (const c of runs.flatMap((r) => r.checks)) {
-    const key = c.name.startsWith("answer") ? "answer_text" : c.name.startsWith("tool:") ? "required_tools" : c.name;
+    const key = c.name.startsWith("answer ") ? "answer_text" : c.name.startsWith("tool:") ? "required_tools" : c.name;
     const s = checkStats.get(key) ?? { passed: 0, total: 0 };
     s.total++;
     if (c.passed) s.passed++;
@@ -81,7 +80,7 @@ async function main(): Promise<void> {
 
   const outDir = join("evals", "results");
   mkdirSync(outDir, { recursive: true });
-  const file = join(outDir, `${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  const file = join(outDir, `${new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")}.json`);
   writeFileSync(file, JSON.stringify({ model: config.NVIDIA_MODEL, mcp: app.mcp, repeats, passed, total: runs.length, checks: Object.fromEntries(checkStats), runs }, null, 2));
   console.log(`\nresults written to ${file}`);
   process.exit(passed === runs.length ? 0 : 1);

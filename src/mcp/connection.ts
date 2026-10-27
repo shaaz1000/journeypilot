@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { ToolError } from "../tools/types.js";
 
 export interface DiscoveredTool {
@@ -55,7 +56,10 @@ export class McpConnection {
       // Anything below the tool level (expired session, dropped stream, timeout) makes the session suspect.
       this.stale = true;
       const message = error instanceof Error ? error.message : String(error);
-      const timedOut = /timed out|-32001|abort/i.test(message);
+      // Decided from the error's type and code, not its wording.
+      const timedOut =
+        (error instanceof McpError && error.code === ErrorCode.RequestTimeout) ||
+        (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"));
       throw new ToolError(`${this.serverName} MCP call failed: ${message}`, timedOut ? "timeout" : "provider", true);
     }
     const text = Array.isArray(result.content)
