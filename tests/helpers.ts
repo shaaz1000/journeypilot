@@ -9,9 +9,10 @@ import { Orchestrator } from "../src/orchestrator/orchestrator.js";
 import { createFetchOfficialPageTool, findOfficialSourcesTool } from "../src/tools/benefits.js";
 import { createFlightSearchTool } from "../src/tools/flights.js";
 import { ToolGateway } from "../src/tools/gateway.js";
-import { createCurrencyTool, createLocalTimeTool, createThingsToDoTool } from "../src/tools/destination.js";
+import { createCityTransportTool, createCurrencyTool, createLocalTimeTool, createThingsToDoTool } from "../src/tools/destination.js";
 import { searchHotelsTool } from "../src/tools/hotels.js";
 import { createFetchRightsPageTool, findRightsSourcesTool } from "../src/tools/rights.js";
+import { createFetchVisaPageTool, findVisaSourcesTool, planLayoverTool } from "../src/tools/transit.js";
 import { Tracer, type TraceEvent } from "../src/trace/tracer.js";
 
 export const TEST_SECRET = "nvapi-test-secret-value-1234567890";
@@ -145,6 +146,10 @@ export const CAA_PAGE = `<html><head><title>Flight delays | UK Civil Aviation Au
 <p>If your flight is delayed by more than three hours on arrival you may be entitled to compensation of up to 520 pounds, unless the delay was caused by extraordinary circumstances.</p>
 <p>While you wait, the airline must provide food and drink, and accommodation if the delay is overnight.</p></body></html>`;
 
+export const QATAR_VISA_PAGE = `<html><head><title>Visas | Visit Qatar</title></head><body>
+<p>Citizens of India can enter Qatar visa-free for up to 30 days with a passport valid for six months and a confirmed return ticket.</p>
+<p>Transit passengers with at least five hours between flights may apply for a free transit visa through Qatar Airways.</p></body></html>`;
+
 export const AMEX_PAGE = `<html><head><title>Platinum Card | AMEX UK</title></head><body>
 <p>Priority Pass membership: cardmembers get complimentary access to Priority Pass lounges worldwide for the cardmember and one guest.</p>
 <p>Additional guests are charged at GBP 24 per guest per visit.</p></body></html>`;
@@ -187,6 +192,10 @@ export function testOrchestrator({ llm, kiwi = null, fetchImpl }: TestAppOptions
       createThingsToDoTool(destinationFetch),
       findRightsSourcesTool,
       createFetchRightsPageTool(fetchImpl ?? (async () => pageResponse(CAA_PAGE))),
+      planLayoverTool,
+      createCityTransportTool(destinationFetch),
+      findVisaSourcesTool,
+      createFetchVisaPageTool(fetchImpl ?? (async () => pageResponse(QATAR_VISA_PAGE))),
       createFetchOfficialPageTool(fetchImpl ?? (async () => pageResponse(AMEX_PAGE)), 2000),
     ],
     TOOL_PERMISSIONS,

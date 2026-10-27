@@ -119,6 +119,10 @@ function factLine(tool: string, data: unknown): string | null {
     const c = data as Conversion;
     return `**${number.format(c.amount)} ${c.from} = ${number.format(c.converted)} ${c.to}** at ${c.rate} (${markdownText(c.source)}, ${c.rateDate}).`;
   }
+  if (tool === "plan_layover") {
+    const p = data as { layoverHours: number; usableHoursInCity: number; oneWayTravelMinutes: number; travelTimeSource: string; verdict: string; assumptions: { arrivalProcessingMinutes: number; returnBeforeDepartureMinutes: number } };
+    return `**About ${p.usableHoursInCity} hours usable in the city** out of a ${p.layoverHours} hour layover: ${markdownText(p.verdict)} Allows ${p.assumptions.arrivalProcessingMinutes} minutes to leave the airport, ${p.oneWayTravelMinutes} minutes each way (${p.travelTimeSource}), and being back ${p.assumptions.returnBeforeDepartureMinutes / 60} hours before departure.`;
+  }
   if (tool === "get_local_time") {
     const t = data as LocalTime;
     return `**Local time in ${markdownText(t.place)}${t.country ? `, ${markdownText(t.country)}` : ""}: ${t.localTime}** on ${t.localDate} (${t.timezone}, ${t.utcOffset}).`;

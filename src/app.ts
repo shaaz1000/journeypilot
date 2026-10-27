@@ -9,9 +9,10 @@ import { Orchestrator } from "./orchestrator/orchestrator.js";
 import { createFetchOfficialPageTool, findOfficialSourcesTool } from "./tools/benefits.js";
 import { createFlightSearchTool, findFlightSearchTool } from "./tools/flights.js";
 import { ToolGateway } from "./tools/gateway.js";
-import { createCurrencyTool, createLocalTimeTool, createThingsToDoTool } from "./tools/destination.js";
+import { createCityTransportTool, createCurrencyTool, createLocalTimeTool, createThingsToDoTool } from "./tools/destination.js";
 import { searchHotelsTool } from "./tools/hotels.js";
 import { createFetchRightsPageTool, findRightsSourcesTool } from "./tools/rights.js";
+import { createFetchVisaPageTool, findVisaSourcesTool, planLayoverTool } from "./tools/transit.js";
 import { LangfuseSink } from "./trace/langfuse.js";
 import { JsonlFileSink, pruneOldLogs, Tracer, type TraceSink } from "./trace/tracer.js";
 
@@ -94,6 +95,10 @@ export async function createApp(config: AppConfig, overrides: AppOverrides = {})
       createThingsToDoTool(),
       findRightsSourcesTool,
       createFetchRightsPageTool(fetch, embedder),
+      planLayoverTool,
+      createCityTransportTool(),
+      findVisaSourcesTool,
+      createFetchVisaPageTool(fetch, embedder),
       createFetchOfficialPageTool(fetch, 20_000, embedder),
     ],
     TOOL_PERMISSIONS,

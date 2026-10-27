@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const AGENT_NAMES = ["flight", "hotel", "benefits", "destination", "rights"] as const;
+export const AGENT_NAMES = ["flight", "hotel", "benefits", "destination", "rights", "transit"] as const;
 export type AgentName = (typeof AGENT_NAMES)[number];
 
 /** How each agent's area is named to travellers. */
@@ -10,9 +10,10 @@ export const AGENT_LABELS: Record<AgentName, string> = {
   benefits: "lounge and card information",
   destination: "destination information",
   rights: "passenger rights information",
+  transit: "transit and visa information",
 };
 
-export const TRAVEL_INTENTS = ["flight_search", "hotel_search", "lounge_benefits", "destination_info", "passenger_rights", "trip_planning"] as const;
+export const TRAVEL_INTENTS = ["flight_search", "hotel_search", "lounge_benefits", "destination_info", "passenger_rights", "transit_visa", "trip_planning"] as const;
 export type TravelIntent = (typeof TRAVEL_INTENTS)[number];
 
 /** One earlier turn of the conversation, sent by the chat client with each new message. */
@@ -24,7 +25,7 @@ export interface ChatTurn {
 export const MAX_HISTORY_TURNS = 10;
 
 /** Details a search cannot run without. Asked for before any agent runs. */
-export const REQUIRED_DETAILS = ["origin", "destination", "departure_date", "hotel_city", "check_in_date"] as const;
+export const REQUIRED_DETAILS = ["origin", "destination", "departure_date", "hotel_city", "check_in_date", "nationality", "layover_city"] as const;
 export type RequiredDetail = (typeof REQUIRED_DETAILS)[number];
 
 /** What the orchestrator's classification call must return. Anything else fails closed. */
@@ -66,7 +67,8 @@ export interface EvidenceRecord {
   tool: string;
   source: "mcp" | "local";
   server?: string;
-  dataSource: "live" | "demo_fixture" | "official_page";
+  /** computed: deterministic code over validated inputs, such as the layover time budget. */
+  dataSource: "live" | "demo_fixture" | "official_page" | "computed";
   data: unknown;
   citation?: Citation;
 }

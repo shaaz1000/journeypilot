@@ -2,6 +2,7 @@ import { ClassificationSchema, type AgentName, type PolicyDecision, type Require
 
 const FLIGHT_DETAILS = new Set<RequiredDetail>(["origin", "destination", "departure_date"]);
 const HOTEL_DETAILS = new Set<RequiredDetail>(["hotel_city", "check_in_date"]);
+const TRANSIT_DETAILS = new Set<RequiredDetail>(["nationality", "layover_city"]);
 
 export const MIN_CONFIDENCE = 0.6;
 
@@ -11,6 +12,7 @@ const AGENT_FOR_INTENT: Record<TravelIntent, AgentName | null> = {
   lounge_benefits: "benefits",
   destination_info: "destination",
   passenger_rights: "rights",
+  transit_visa: "transit",
   // Planning is the orchestrator's own synthesis step; it needs at least one data intent alongside it.
   trip_planning: null,
 };
@@ -42,7 +44,9 @@ export function decidePolicy(raw: unknown): PolicyDecision {
     return { outcome: "clarify", agents: [], reason: "planning request without flight, hotel or lounge details", declinedPortion };
   }
   // Only details that belong to a selected agent count; a stray hotel slot on a flight search is ignored.
-  const relevant = c.missing_details.filter((d) => (FLIGHT_DETAILS.has(d) && agents.includes("flight")) || (HOTEL_DETAILS.has(d) && agents.includes("hotel")));
+  const relevant = c.missing_details.filter(
+    (d) => (FLIGHT_DETAILS.has(d) && agents.includes("flight")) || (HOTEL_DETAILS.has(d) && agents.includes("hotel")) || (TRANSIT_DETAILS.has(d) && agents.includes("transit")),
+  );
   if (relevant.length > 0) {
     return { outcome: "clarify", agents: [], reason: `missing ${relevant.join(", ")}`, declinedPortion, missingDetails: [...new Set(relevant)] };
   }

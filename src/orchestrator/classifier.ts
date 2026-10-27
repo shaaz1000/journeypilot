@@ -12,8 +12,10 @@ Supported intents:
 - hotel_search: hotels or accommodation, room rates, total stay cost.
 - lounge_benefits: airport lounges, Priority Pass, lounge eligibility, guest fees, airport facilities, and credit or charge card benefits that relate to travel or lounge access.
 - passenger_rights: what the law says and what the airline must do when a flight is delayed, cancelled or overbooked: care (meals, hotel), rebooking, refunds and compensation.
+- transit_visa: layovers and connections: whether there is time to leave the airport and visit the city, and the visa or transit rules for doing so.
 - destination_info: things to see and do in a city or country, the local time somewhere, and converting an amount of money between currencies for travel.
 - trip_planning: combining flights, hotels and lounges into an itinerary or travel budget. Always add the specific intents the plan needs as well.
+A layover question that also asks what to see in the city has both transit_visa and destination_info.
 
 Search preferences are part of the search they refine, never unsupported: currency to show prices in, cabin class, number of travellers, stops, departure times and budget.
 Everything else is unsupported: coding, general knowledge, entertainment, creative writing, health, legal, and financial advice not about travel benefits.
@@ -23,7 +25,7 @@ Fields:
 - intents: supported intents only. Use an empty list when nothing in the message is supported.
 - travel_task: the supported travel part rewritten as one self-contained instruction. Keep every concrete detail (places, airports, dates as YYYY-MM-DD, passengers, budgets, card names). Resolve relative dates against today's date. Empty when there is no supported part.
 - unsupported_portion: a short description of any unsupported part, otherwise empty.
-- missing_details: details a search cannot run without that the message does not give. Flights need origin, destination and departure_date. Hotels need hotel_city and check_in_date (a length of stay or check-out date is optional). Never list a detail you can work out: city names and old names (Bombay is Mumbai), and dates such as "2nd November", "next Friday" or "tomorrow" (use the next future occurrence). Empty when nothing is missing or the request is not a flight or hotel search.
+- missing_details: details a search cannot run without that the message does not give. Flights need origin, destination and departure_date. Hotels need hotel_city and check_in_date (a length of stay or check-out date is optional). Transit and visa questions need nationality (the passport held) and layover_city. Never list a detail you can work out: city names and old names (Bombay is Mumbai), and dates such as "2nd November", "next Friday" or "tomorrow" (use the next future occurrence). Empty when nothing is missing or the request is not a flight or hotel search.
 - confidence: 0 to 1, how sure you are about the intents.
 - clarifying_question: one short question when the travel request is too vague to act on, otherwise empty.
 

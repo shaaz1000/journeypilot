@@ -165,12 +165,15 @@ const QUESTION: Record<RequiredDetail, string> = {
   departure_date: "Which date do you want to fly?",
   hotel_city: "Which city do you want to stay in?",
   check_in_date: "Which date do you want to check in?",
+  nationality: "Which passport will you be travelling on?",
+  layover_city: "Which city is the layover in?",
 };
 
 /** A short, direct question for the details a search needs, with an example of a complete request. */
 function askFor(missing: RequiredDetail[]): string {
   const flight = missing.some((d) => d === "origin" || d === "destination" || d === "departure_date");
-  const example = flight ? "Mumbai to Delhi on 15 November for 2 people" : "London, 3 nights from 10 December";
+  const transit = missing.some((d) => d === "nationality" || d === "layover_city");
+  const example = flight ? "Mumbai to Delhi on 15 November for 2 people" : transit ? "a 10 hour layover in Doha on an Indian passport" : "London, 3 nights from 10 December";
   return `I can search that for you. ${missing.map((d) => QUESTION[d]).join(" ")}\n\nFor example: "${example}".`;
 }
 

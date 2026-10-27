@@ -295,6 +295,38 @@ describe("orchestrator: passenger rights", () => {
   });
 });
 
+describe("orchestrator: layovers", () => {
+  it("asks which passport the traveller holds before checking visa rules", async () => {
+    const llm = new ScriptedLlm({ classify: () => classification({ intents: ["transit_visa"], confidence: 0.9, travel_task: "10 hour layover in Doha, can I visit the city", missing_details: ["nationality"] }) });
+    const { result } = await testOrchestrator({ llm }).orchestrator.handle("I have a 10 hour layover in Doha, can I visit the city?");
+    expect(result.status).toBe("clarify");
+    expect(result.answer).toContain("Which passport will you be travelling on?");
+  });
+
+  it("runs the Transit and Destination agents together for a layover city visit", async () => {
+    const llm = new ScriptedLlm({
+      classify: () => classification({ intents: ["transit_visa", "destination_info"], confidence: 0.9, travel_task: "10 hour layover in Doha on an Indian passport: can I leave the airport, and what can I see?" }),
+      "agent:transit": (_req, n) =>
+        n === 0 ? toolCall("get_airport_to_city", { city: "Doha" })
+        : n === 1 ? toolCall("plan_layover", { layoverHours: 10, airportToCityMinutes: 20 })
+        : n === 2 ? toolCall("fetch_visa_page", { url: "https://visitqatar.com/intl-en/plan-your-trip/visas", query: "Indian citizens visa-free entry" })
+        : text("Indian passport holders can enter Qatar visa-free."),
+      "agent:destination": (_req, n) => (n === 0 ? toolCall("find_things_to_do", { place: "Doha" }) : text("Museum of Islamic Art.")),
+      synthesise: () => composed({
+        summary: "Yes: with an Indian passport you can enter Qatar visa-free, and there is time for a short city visit.",
+        picks: [{ ref: "X1" }, { ref: "S2", comment: "Citizens of India can enter Qatar visa-free for up to 30 days." }, { ref: "P1", comment: "close to the city centre" }],
+      }),
+    });
+    const { result, tracer } = await testOrchestrator({ llm }).orchestrator.handle("10 hour layover in Doha on an Indian passport, can I visit the city and what should I see?");
+    expect(result.agentsUsed.sort()).toEqual(["destination", "transit"]);
+    expect(result.review.passed).toBe(true);
+    expect(result.body).toContain("usable in the city");
+    expect(result.body).toContain("Museum of Islamic Art");
+    expect(result.citations.map((c) => c.url)).toEqual(expect.arrayContaining(["https://visitqatar.com/intl-en/plan-your-trip/visas"]));
+    expect(eventsOf(tracer.events, "delegation").map((e) => e.agent).sort()).toEqual(["destination", "transit"]);
+  });
+});
+
 describe("orchestrator: failures and grounding", () => {
   it("explains unavailable flight data without fabricating results", async () => {
     const kiwi = await fakeKiwi("error");
