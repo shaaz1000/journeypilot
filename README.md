@@ -1,12 +1,21 @@
 # JourneyPilot
 
-A small multi-agent assistant for travel and airport experiences, written in TypeScript on Node.js. An
-orchestrator classifies each request, applies a scope policy, and delegates to specialist agents for
-flights, hotels, and lounge and travel-card benefits. Every agent step is traced, and the final answer is
-checked against what the tools actually returned.
+A multi-agent assistant for travel and airport experiences, written in TypeScript on Node.js. An
+orchestrator classifies each request, applies a scope policy, and delegates to specialist agents:
 
-The model is NVIDIA Nemotron on NVIDIA's free hosted endpoint. Flight data is live, from the Kiwi.com
-public MCP server.
+- flights, including airline baggage rules;
+- hotels;
+- lounges and travel-card benefits;
+- destinations: currency, local time and things to see;
+- passenger rights when a flight is delayed or cancelled;
+- layovers and transit visas.
+
+Every agent step is traced, and every sentence in the final answer is checked against what the tools
+actually returned.
+
+The model is NVIDIA Nemotron on NVIDIA's free hosted endpoint. There are two MCP integrations: the
+Kiwi.com public server for live flights, and Microsoft's Playwright server for reading airline pages in a
+real browser.
 
 Full reasoning, including the review of the brief against the original plan, is in [PLAN.md](PLAN.md).
 
@@ -84,16 +93,14 @@ Orchestrator --classify (forced function call, zod-validated)--> Nemotron
 Policy gate (code): malformed -> refuse | no travel intent -> decline | low confidence -> clarify
    |  allow: intents mapped to agents in code, travel part of the request only
    v
-+-------------+  +-------------+  +------------------+
-| Flight      |  | Hotel       |  | Benefits         |   run in parallel, each with a
-| agent       |  | agent       |  | agent            |   bounded tool loop (3 to 4 steps)
-+------+------+  +------+------+  +--------+---------+
-       |                |                  |
-       v                v                  v
-            ToolGateway (code): permissions, zod args, timeout, retry, trace
-       |                |                  |
- search_flights    search_hotels    find_official_sources, fetch_official_page
- (Kiwi MCP, live)  (demo fixture)   (registry + allowlisted fetch)
++--------+ +-------+ +----------+ +-------------+ +--------+ +---------+
+| Flight | | Hotel | | Benefits | | Destination | | Rights | | Transit |   only the agents the intents
++---+----+ +---+---+ +----+-----+ +------+------+ +---+----+ +----+----+   need, in parallel, each with a
+    |          |          |              |            |           |        bounded tool loop
+    v          v          v              v            v           v
+           ToolGateway (code): per-agent permissions, zod args, timeout, retry, trace
+    |                                                         |
+ Kiwi MCP (flights)                              Playwright MCP (headless browser)
    |
    v
 Orchestrator: compose (LLM, structured) -> render results from data (code) -> grounding judge (LLM) -> answer
@@ -104,9 +111,12 @@ Orchestrator: compose (LLM, structured) -> render results from data (code) -> gr
 | Component | Responsibility | Tools |
 |-----------|----------------|-------|
 | Orchestrator | Classify, plan, delegate, combine, write the final answer | `classify_request` only. It cannot call specialist tools. |
-| Flight agent | Search and compare flights | `search_flights` |
+| Flight agent | Search and compare flights; airline baggage rules | `search_flights` (Kiwi MCP), `fetch_airline_baggage_policy` (Playwright MCP) |
 | Hotel agent | Compare hotels; nightly rate vs total stay cost | `search_hotels` |
 | Benefits agent | Lounge access, Priority Pass, card benefits | `find_official_sources`, `fetch_official_page` |
+| Destination agent | Currency conversion, local time, things to see and do | `convert_currency`, `get_local_time`, `find_things_to_do` |
+| Rights agent | What the law says and what the airline must do on a delay, cancellation or denied boarding | `find_rights_sources`, `fetch_rights_page` |
+| Transit agent | Whether a layover leaves time to visit the city, and the visa rules for it | `plan_layover`, `get_airport_to_city`, `find_visa_sources`, `fetch_visa_page` |
 | Answer composer | Picks results by reference and writes the prose; code renders each picked result from tool data | `compose_answer` (structured output only) |
 | Grounding judge | Checks every sentence the model wrote against the evidence; unsupported sentences are removed | `record_verdicts` (structured output only) |
 
@@ -118,20 +128,20 @@ Orchestrator: compose (LLM, structured) -> render results from data (code) -> gr
 - **Prices and links cannot be invented.** The model never writes the result lines. It returns a structured answer that refers to results by ID (F1 for a flight, H1 for a hotel, S1 for an official page). Code renders each referenced result's price, route, times, airline, baggage and booking link from the tool output, and labels demo hotels.
 - **Every sentence the model writes is judged.** A second structured call checks each summary, comment and note against the results and the provider's record of the search. Anything without an explicit "supported" verdict is removed before the traveller sees it; if the judge is unavailable, all prose is removed and only the rendered results remain. Code also checks structurally that referenced IDs exist, benefit answers cite a fetched page, and sources are fresh.
 - **No regex for understanding content.** Routing is a model classification validated by zod. Official pages are parsed with htmlparser2, and the passages most relevant to the question are ranked with Nemotron embeddings. Answers are checked by the judge, and Markdown is rendered by markdown-it. Regex remains only in log redaction, where it matches fixed secret and personal-data formats.
-- **Missing details become questions.** The classifier reports missing essentials (origin, destination, travel date, hotel city, check-in date). The policy gate then asks for them in plain language before any agent runs. The chat page sends the earlier message with the reply, so "2nd November, 2 people" completes "a Bombay to Delhi ticket".
+- **Missing details become questions.** The classifier reports missing essentials: origin, destination and travel date for a flight search, city and check-in date for hotels, passport and layover city for a visa question. The policy gate asks for them in plain language before any agent runs, judging by intent, so a baggage question is never asked for a route.
+- **The model decides how to use the conversation.** The chat page sends the last 10 turns. The classifier first decides `continue` (an answer to a question, or a change such as "in INR, business class") or `new_request` (nothing carries over). The decision is logged on every trace.
+- **Each agent has its own sources.** The rights, visa and lounge agents each have a registry of official pages and a fetch tool limited to their own domains. Facts the tools return (exchange rates, local times, the layover time budget) are rendered by code, like prices.
+- **The browser is honest.** Airline pages are read in a real headless browser that identifies itself as one. When an airline refuses automated access, the answer says so and links the official page; it never guesses an allowance or works around bot protection.
 - **No agent framework.** A small loop over the OpenAI-compatible API keeps permissions, validation and tracing in one place that tests can inspect directly. Mastra would be a reasonable next step (see below); the gateway and policy gate would carry over as tool wrappers.
 
-### MCP integration
+### MCP integrations
 
-The Kiwi.com public MCP server (`https://mcp.kiwi.com`, streamable HTTP, no key) is connected at startup. The flight tool is found by its input schema (`flyFrom`, `flyTo`, `departureDate`), not by a hard-coded name. Results are condensed to the fields the provider returned.
+**Kiwi.com** (`https://mcp.kiwi.com`, streamable HTTP, no key) serves live flight search. The tool is found by its input schema (`flyFrom`, `flyTo`, `departureDate`), not by a hard-coded name, and results are condensed to fields the provider returned. In live runs the endpoint sometimes drops connections, takes over 30 s, or expires the session. So:
+- the session is opened on demand and reopened after any connection-level failure;
+- each search gets up to three attempts, with a short backoff;
+- error results, non-JSON content and unexpected shapes become typed tool errors.
 
-Failures that are handled:
-- Connection failure (retried once at startup; flight search then reports itself unavailable).
-- Timeouts (retried once per call).
-- Error results from the server.
-- Non-JSON content, or an unexpected result shape.
-
-In live runs the endpoint occasionally drops a TCP connection or takes over 30 s, which is why these paths exist.
+**Playwright** (`@playwright/mcp` 0.0.83, stdio, headless Chromium) reads pages that need a real browser. The server starts on first use and handles one page at a time. Before use, the code checks that the server offers `browser_navigate`, `browser_wait_for` and `browser_evaluate`, and it reads the page with fixed code, never model-written code. Block, challenge and error pages are recognised and reported. One-time setup after `npm install`: `node node_modules/playwright/cli.js install chromium`.
 
 What each journey actually uses:
 
@@ -139,7 +149,13 @@ What each journey actually uses:
 |---------|------|--------|
 | Flights | Kiwi.com via MCP | Live |
 | Hotels | Local fixture | Demo only, labelled in every answer. No free, keyless hotel provider was available. |
+| Airline baggage | The airline's own page, read in the browser | Live for Akasa Air and American Airlines. IndiGo, SpiceJet, Air India, Emirates, Qatar Airways, BA, Singapore Airlines, Turkish, Lufthansa, United and Delta refuse automated browsers; the answer links their page instead. Kiwi's per-flight bag counts are always shown. |
 | Lounges and cards | Official issuer and programme pages fetched live (Priority Pass, Amex UK, Capital One, LoungeKey, DragonPass) | Live, cited with URL and retrieval time |
+| Currency | European Central Bank reference rates (Frankfurter API); ExchangeRate-API for currencies the ECB does not publish, such as AED | Live, source named in the answer |
+| Local time | Open-Meteo geocoding for the time zone, then the system clock | Live |
+| Things to see, airport to city | Wikivoyage travel guides (See, Do, Get in, Get around) | Live, cited |
+| Delay and cancellation rights | UK Civil Aviation Authority, EU Your Europe, and the Government of India's summary of the DGCA rules (Vikaspedia, rendered in the browser) | Live, cited. No US source: the DOT site blocks automated access. |
+| Transit visas | GOV.UK, European Commission, US State Department, Türkiye e-Visa, India e-Visa, Visit Qatar, Singapore ICA | Live, cited. Not covered: the UAE (its official transit page could not be found). The US page also blocks automated browsers. |
 | Trip planning | Orchestrator combines specialist results | Uses the above |
 
 ## Observability
@@ -175,7 +191,7 @@ Set `LOG_RAW_PAYLOADS=false` to keep only 300-character previews of prompts and 
 
 ## Testing
 
-`npm test` runs 110 offline tests in about 5 seconds, with a scripted model and a real MCP server over an in-memory transport:
+`npm test` runs 155 offline tests in about 6 seconds, with a scripted model and real MCP servers over in-memory transports:
 
 | File | Covers |
 |------|--------|
@@ -187,14 +203,19 @@ Set `LOG_RAW_PAYLOADS=false` to keep only 300-character previews of prompts and 
 | `tests/redaction.test.ts` | Secret and personal-data masking, redaction before truncation, sink failure, retention |
 | `tests/langfuse.test.ts` | Mapping to Langfuse traces, generations and spans; redaction of what is sent; flush on completion; cloud outages |
 | `tests/server.test.ts` | Chat API returns no trace data, admin token required, cross-origin and DNS-rebinding refusal, bundled pages |
+| `tests/destination.test.ts` | ECB rate and fallback source, currency code validation, local time from the time zone, Wikivoyage listings without map coordinates, rendering of facts and places |
+| `tests/rights.test.ts` | Every set of rules a route can fall under, regulator-only allowlist, cited passages |
+| `tests/transit.test.ts` | Layover time budget, airside advice, visa page found by layover place and not by passport, whole-word place matching, asking for the passport |
+| `tests/browser.test.ts` | Playwright MCP reader against a fake server (tool check, block pages, result parsing); exact airline matching; refusing airlines linked, not guessed; browser fallback only when needed |
 | `tests/orchestrator.test.ts` | Refusal before any agent runs, mixed requests, multi-agent trips, tool failure, injected page content, reminder path, trace correlation |
 
 ## Evaluation
 
-The question the evals answer is: did the right path produce this answer? A fluent answer reached by the wrong path should still fail. `npm run eval` sends eight live requests through the real model, MCP server and websites and grades each one, mostly from its trace:
+The question the evals answer is: did the right path produce this answer? A fluent answer reached by the wrong path should still fail. `npm run eval` sends 17 live requests, three of them multi-turn, through the real model, both MCP servers and the websites and grades each one, mostly from its trace:
 
-- **Policy:** the expected outcome (allow, decline, refuse).
-- **Delegation:** exactly the expected set of agents ran, no more and no fewer.
+- **Policy:** the expected outcome (allow, decline, clarify, refuse).
+- **Conversation use:** for follow-ups, whether the model continued the conversation or started fresh, and with which tool arguments (for example business class, INR, 2 adults, the earlier date).
+- **Delegation:** exactly the expected set of agents ran, no more and no fewer, except agents a case marks as optional.
 - **Blocked before execution:** for declined requests, zero delegations and zero tool calls.
 - **Tool permissions:** no `not_permitted` calls, and every call is inside its agent's allowlist.
 - **Required tools and MCP usage:** the expected tools succeeded, including at least one call through the MCP server where flights are involved.
@@ -204,12 +225,17 @@ The question the evals answer is: did the right path produce this answer? A flue
   - whether the model's answer was kept in full;
   - how many sentences the grounding judge removed.
 
-Cases: flight comparison, hotel stay, lounge eligibility, an unrelated coding request, unrelated finance advice, a mixed request, direct prompt injection, and a multi-domain trip. Dates are relative to today, so the suite does not go stale.
+Cases:
+- **Search:** flight comparison, hotel stay, lounge eligibility, a multi-domain trip.
+- **Scope:** an unrelated coding request, unrelated finance advice, a mixed request, direct prompt injection.
+- **Conversation:** a flight request missing its date, a follow-up that refines a search, a topic switch.
+- **New agents:** currency conversion, local time and sights, delay rights, a layover city visit, a layover question missing the passport, airline baggage through the browser. Dates are relative to today, so the suite does not go stale.
 
 **Catching regressions.** Every run writes `evals/results/<timestamp>.json` with per-check pass rates, latency, model calls, tool calls and tokens. The runner exits non-zero on any hard failure, so it can gate CI. `--repeat N` measures flakiness, which matters with a nondeterministic model.
 
 **What the evals found while building this:**
 - Specialists answered without calling tools: for "3 nights from <date>" with no check-out date, and for "Heathrow" not being matched as a city.
+- A failed connection at startup left flight search unavailable for the life of the process; it now connects on demand.
 - Arithmetic errors in prose ("£39 cheaper" when the gap was £29). The pattern-based checker caught these, but also misread "1 560 AED" and links wrapped in backticks. Both problems led to the move to structured answers checked by a judge.
 
 Each was fixed in its own commit.
@@ -219,13 +245,14 @@ Each was fixed in its own commit.
 ## Assumptions and limitations
 
 - Hotel data is a demo fixture. A real provider would replace `search_hotels` behind the same gateway.
-- Lounge and card answers are only as good as the official pages in the registry (six pages).
+- Lounge, rights and visa answers are only as good as the official pages in their registries. Visa rules depend on nationality and change often, so answers always cite the page and tell the traveller to confirm.
+- Many airlines refuse automated browsers, so live baggage rules are available for only a few; for the rest the answer links the official page. A licensed data feed (for example IATA's Timatic for visas, or airline APIs) would be the production route.
 - The grounding judge is itself a model. It fails closed (no verdict means the sentence is removed), but it can still wrongly support or reject a sentence. Its verdicts and reasons are in every trace for review.
 - With thinking on, a request makes about five model calls and typically takes 1 to 2 minutes; the judge is the slowest step. `NVIDIA_THINKING=false` brings this to roughly 15 to 25 seconds.
 - Kiwi prices are in the requested currency, GBP by default. Results from a city search can include nearby airports (for example Sharjah for Dubai).
 - The model is nondeterministic. The reminder step and the evals reduce, but do not remove, cases where an agent answers without searching.
 - Classification is a single model call. If the model is unavailable, the request fails closed and nothing runs.
-- There is no conversation memory; each message is handled on its own.
+- Conversation memory lives in the browser tab (last 10 turns); there is no server-side history across devices or sessions.
 
 ## What I would change for production
 
