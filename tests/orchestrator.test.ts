@@ -104,6 +104,33 @@ describe("orchestrator: delegation and tool use", () => {
     expect(result.answer).toContain("demo data, not live availability");
   });
 
+  it("reminds a specialist once when it answers without calling a tool", async () => {
+    const llm = new ScriptedLlm({
+      classify: () => classification({ intents: ["hotel_search"], confidence: 0.9, travel_task: "Hotel in Dubai 2026-11-26 to 2026-11-29" }),
+      "agent:hotel": (req, n) => {
+        const reminded = req.messages.some((m) => m.role === "user" && m.content.startsWith("You have not called a tool"));
+        if (!reminded) return text("I'm not able to search hotels right now.");
+        return n === 0 ? toolCall("search_hotels", { city: "Dubai", checkIn: "2026-11-26", checkOut: "2026-11-29" }) : text("Creekside, demo data.");
+      },
+      synthesise: () => text("Creekside Stopover Hotel (demo): 520 AED per night, 1 560 AED total."),
+    });
+    const { result, tracer } = await testOrchestrator({ llm }).orchestrator.handle("Hotel in Dubai 26-29 Nov");
+    expect(result.status).toBe("answered");
+    expect(result.review).toMatchObject({ passed: true, replaced: false });
+    expect(eventsOf(tracer.events, "agent").map((e) => e.status)).toEqual(["reminded", "ok"]);
+  });
+
+  it("does not loop when a specialist still cannot act after the reminder", async () => {
+    const llm = new ScriptedLlm({
+      classify: () => classification({ intents: ["flight_search"], confidence: 0.9, travel_task: "Flights to Paris" }),
+      "agent:flight": () => text("I need a departure date and origin."),
+      synthesise: () => text("Please share your departure date and origin."),
+    });
+    const { result } = await testOrchestrator({ llm }).orchestrator.handle("Flights to Paris");
+    expect(llm.purposes().filter((p) => p === "agent:flight")).toHaveLength(2);
+    expect(result.status).toBe("failed");
+  });
+
   it("blocks a specialist that tries to call another agent's tool", async () => {
     const llm = new ScriptedLlm({
       classify: () => classification({ intents: ["hotel_search"], confidence: 0.9, travel_task: "Hotels in London 2026-12-10 to 2026-12-12" }),

@@ -51,10 +51,20 @@ export async function runSpecialist(
   ];
 
   let summary = "";
+  let reminded = false;
   try {
     for (let step = 0; step < config.maxSteps && !summary; step++) {
       const response = await tracedChat(llm, tracer, { purpose: `agent:${config.name}`, messages, tools, toolChoice: "auto" }, spanId);
       if (response.toolCalls.length === 0) {
+        // Smaller models sometimes answer from caution without searching. Remind once, without forcing a call,
+        // so a genuinely missing detail is still reported instead of guessed.
+        if (evidence.length === 0 && errors.length === 0 && !reminded) {
+          reminded = true;
+          tracer.emit("agent", { agent: config.name, status: "reminded", reason: "replied without calling a tool", reply: tracer.payload(response.content) }, { parentSpanId: spanId });
+          messages.push({ role: "assistant", content: response.content });
+          messages.push({ role: "user", content: "You have not called a tool yet. If the request gives what your tool needs (defaults are allowed), call it now. Otherwise reply with exactly which detail is missing." });
+          continue;
+        }
         summary = response.content?.trim() ?? "";
         break;
       }
@@ -103,6 +113,8 @@ export async function runSpecialist(
       durationMs: Math.round(performance.now() - started),
       toolCalls: evidence.map((e) => e.tool),
       errors,
+      reminded,
+      summary: tracer.payload(summary),
       outputSchema: summary ? "valid" : "empty",
     },
     { spanId, parentSpanId: delegation.parentSpanId },
