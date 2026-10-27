@@ -13,8 +13,10 @@ export interface EvalCase {
     toolArgs?: { tool: string; args: Record<string, unknown> };
     /** Acceptable policy outcomes from the trace. */
     policy: PolicyOutcome[];
-    /** Exact set of agents that must be delegated to (empty means none may run). */
+    /** Agents that must be delegated to (empty means none may run). */
     agents: AgentName[];
+    /** Agents that may also run without failing the case; any others fail it. */
+    optionalAgents?: AgentName[];
     status?: FinalStatus[];
     /** Tools that must have at least one successful call. */
     requiredTools?: string[];
@@ -103,6 +105,42 @@ export const CASES: EvalCase[] = [
     ],
     message: "Separately, does the UK Amex Platinum card let me bring a guest into Priority Pass lounges?",
     expect: { conversationUse: "new_request", policy: ["allow"], agents: ["benefits"], requiredTools: ["fetch_official_page"], citations: true },
+  },
+  {
+    id: "currency-conversion",
+    purpose: "Currency conversion goes to the Destination agent and shows a live rate rendered from the data.",
+    message: "How much is 250 GBP in Indian rupees today?",
+    expect: { policy: ["allow"], agents: ["destination"], requiredTools: ["convert_currency"], answerIncludes: [["INR"], ["European Central Bank", "ExchangeRate-API"]] },
+  },
+  {
+    id: "local-time-and-sights",
+    purpose: "Local time and things to see use the Destination agent's time and guide tools, and cite the guide.",
+    message: "What time is it in Tokyo right now, and what should I see there?",
+    expect: { policy: ["allow"], agents: ["destination"], requiredTools: ["get_local_time", "find_things_to_do"], citations: true, answerIncludes: [["Local time in Tokyo"]] },
+  },
+  {
+    id: "delay-rights",
+    purpose: "A delay question goes to the Rights agent, which fetches and cites a regulator's page.",
+    message: "My flight from London to Delhi is delayed by 4 hours. What does the law say and what does the airline have to do?",
+    expect: { policy: ["allow"], agents: ["rights"], requiredTools: ["fetch_rights_page"], citations: true, answerIncludes: [["caa.co.uk", "vikaspedia.in", "europa.eu"]] },
+  },
+  {
+    id: "layover-visit",
+    purpose: "A layover question works out the usable time and checks the visa rule on an official page for that passport.",
+    message: "I have a 10 hour layover in Doha on an Indian passport. Can I leave the airport and visit the city?",
+    expect: { policy: ["allow"], agents: ["transit"], optionalAgents: ["destination"], requiredTools: ["plan_layover", "fetch_visa_page"], citations: true, answerIncludes: [["usable in the city"]] },
+  },
+  {
+    id: "layover-missing-passport",
+    purpose: "A layover visa question without a passport asks for it before any agent runs.",
+    message: "I have a 10 hour layover in Doha, can I visit the city?",
+    expect: { policy: ["clarify"], agents: [], status: ["clarify"], answerIncludes: [["passport"]] },
+  },
+  {
+    id: "airline-baggage",
+    purpose: "A baggage question reads the airline's own page live in the browser (second MCP server) without asking for a route.",
+    message: "What is the checked baggage allowance on Akasa Air?",
+    expect: { policy: ["allow"], agents: ["flight"], requiredTools: ["fetch_airline_baggage_policy"], mcp: true, citations: true, answerIncludes: [["akasaair.com"]] },
   },
   {
     id: "direct-injection",
