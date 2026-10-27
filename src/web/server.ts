@@ -74,6 +74,20 @@ const SECURITY_HEADERS = {
     "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
 };
 
+/**
+ * The server only answers to its own local origin. Checking Host blocks DNS rebinding; requiring JSON and a
+ * matching Origin on POST blocks other websites from driving the chat endpoint (and spending model quota).
+ */
+function sameOriginProblem(req: IncomingMessage): string | null {
+  const port = req.socket.localPort;
+  const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]);
+  if (!allowedHosts.has(req.headers.host ?? "")) return "unexpected Host header";
+  const origin = req.headers.origin;
+  if (origin && !allowedHosts.has(origin.replace(/^https?:\/\//, ""))) return "cross-origin request";
+  if (req.method === "POST" && !(req.headers["content-type"] ?? "").startsWith("application/json")) return "content type must be application/json";
+  return null;
+}
+
 export async function createWebServer(options: ServerOptions): Promise<Server> {
   const assets = await buildAssets(options.webDir ?? "web");
   const traces = new TraceStore(options.logDir);
@@ -81,6 +95,8 @@ export async function createWebServer(options: ServerOptions): Promise<Server> {
   return createServer(async (req, res) => {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
     const url = new URL(req.url ?? "/", "http://localhost");
+    const problem = sameOriginProblem(req);
+    if (problem) return sendJson(res, 403, { error: `Request refused: ${problem}.` });
     try {
       if (req.method === "GET" && assets.has(url.pathname)) {
         const asset = assets.get(url.pathname)!;

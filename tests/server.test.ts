@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Server } from "node:http";
+import { request as httpRequest, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createWebServer } from "../src/web/server.js";
 import { JsonlFileSink, Tracer } from "../src/trace/tracer.js";
@@ -69,8 +69,22 @@ describe("web server", () => {
 
   it("rejects malformed chat requests", async () => {
     expect((await chat({ text: "hi" })).status).toBe(400);
-    expect((await fetch(`${base}/api/chat`, { method: "POST", body: "{not json" })).status).toBe(400);
+    expect((await fetch(`${base}/api/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{not json" })).status).toBe(400);
     expect((await chat({ message: "x".repeat(20_000) })).status).toBe(400);
+  });
+
+  it("refuses requests from other origins or hostnames", async () => {
+    const foreign = await fetch(`${base}/api/chat`, { method: "POST", headers: { "Content-Type": "application/json", Origin: "https://evil.example" }, body: JSON.stringify({ message: "hi" }) });
+    expect(foreign.status).toBe(403);
+    const formPost = await fetch(`${base}/api/chat`, { method: "POST", headers: { "Content-Type": "text/plain" }, body: JSON.stringify({ message: "hi" }) });
+    expect(formPost.status).toBe(403);
+    const rebound = await new Promise<number>((resolve, reject) => {
+      const { port } = new URL(base);
+      const req = httpRequest({ host: "127.0.0.1", port, path: "/", headers: { Host: "attacker.example" } }, (res) => resolve(res.statusCode ?? 0));
+      req.on("error", reject);
+      req.end();
+    });
+    expect(rebound).toBe(403);
   });
 
   it("requires the admin token for trace data", async () => {
