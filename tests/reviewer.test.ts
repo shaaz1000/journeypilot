@@ -62,7 +62,7 @@ describe("structural checks", () => {
 
   it("requires a fetched official page behind a benefits answer", () => {
     const rs = [result("benefits", [registryOnly])];
-    expect(structuralFindings(rs, buildCatalog(rs), [], now)).toContain("benefit answer has no fetched official page behind it");
+    expect(structuralFindings(rs, buildCatalog(rs), [], now)).toContain("benefits answer has no fetched official page behind it");
   });
 
   it("flags stale sources", () => {

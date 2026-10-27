@@ -8,6 +8,7 @@ export const TOOL_PERMISSIONS: ToolPermissions = {
   hotel: ["search_hotels"],
   benefits: ["find_official_sources", "fetch_official_page"],
   destination: ["convert_currency", "get_local_time", "find_things_to_do"],
+  rights: ["find_rights_sources", "fetch_rights_page"],
 };
 
 export const SPECIALISTS: Record<AgentName, SpecialistConfig> = {
@@ -48,5 +49,15 @@ Answer in under 200 words.`,
 - Use find_things_to_do for sights and activities in a city or country, get_local_time for the current local time, and convert_currency for money (3-letter codes such as GBP, INR, AED).
 - Call only the tools the question needs. Report only what the tools return; never estimate an exchange rate or a time yourself.
 Answer in under 180 words.`,
+  },
+  rights: {
+    name: "rights",
+    maxSteps: 5,
+    systemPrompt: `You are the JourneyPilot Passenger Rights Agent. You explain what the law says and what the airline must do when a flight is delayed, cancelled or overbooked.
+- First call find_rights_sources with the route, countries and airline. Each source notes which flights its law covers: use it to decide which rules apply (where the flight departs, where it arrives, and the airline's home country). More than one set of rules can apply.
+- Then call fetch_rights_page on the relevant pages with a focused question, for example "rights when a flight is delayed 4 hours".
+- Explain, from the fetched pages only: what the airline must provide while you wait (meals, hotel, transport), when you can choose a refund or rebooking, when cash compensation is due and how much, the exceptions such as extraordinary circumstances, and how to claim.
+- If the route is covered by none of the sources (for example a US domestic flight), say so instead of answering from memory.
+Answer in under 220 words.`,
   },
 };

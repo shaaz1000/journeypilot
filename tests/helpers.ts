@@ -11,6 +11,7 @@ import { createFlightSearchTool } from "../src/tools/flights.js";
 import { ToolGateway } from "../src/tools/gateway.js";
 import { createCurrencyTool, createLocalTimeTool, createThingsToDoTool } from "../src/tools/destination.js";
 import { searchHotelsTool } from "../src/tools/hotels.js";
+import { createFetchRightsPageTool, findRightsSourcesTool } from "../src/tools/rights.js";
 import { Tracer, type TraceEvent } from "../src/trace/tracer.js";
 
 export const TEST_SECRET = "nvapi-test-secret-value-1234567890";
@@ -140,6 +141,10 @@ export function pageResponse(html: string, status = 200, headers: Record<string,
   return new Response(html, { status, headers: { "content-type": "text/html", ...headers } });
 }
 
+export const CAA_PAGE = `<html><head><title>Flight delays | UK Civil Aviation Authority</title></head><body>
+<p>If your flight is delayed by more than three hours on arrival you may be entitled to compensation of up to 520 pounds, unless the delay was caused by extraordinary circumstances.</p>
+<p>While you wait, the airline must provide food and drink, and accommodation if the delay is overnight.</p></body></html>`;
+
 export const AMEX_PAGE = `<html><head><title>Platinum Card | AMEX UK</title></head><body>
 <p>Priority Pass membership: cardmembers get complimentary access to Priority Pass lounges worldwide for the cardmember and one guest.</p>
 <p>Additional guests are charged at GBP 24 per guest per visit.</p></body></html>`;
@@ -180,6 +185,8 @@ export function testOrchestrator({ llm, kiwi = null, fetchImpl }: TestAppOptions
       createCurrencyTool(destinationFetch),
       createLocalTimeTool(destinationFetch, () => new Date("2026-11-02T14:30:00Z")),
       createThingsToDoTool(destinationFetch),
+      findRightsSourcesTool,
+      createFetchRightsPageTool(fetchImpl ?? (async () => pageResponse(CAA_PAGE))),
       createFetchOfficialPageTool(fetchImpl ?? (async () => pageResponse(AMEX_PAGE)), 2000),
     ],
     TOOL_PERMISSIONS,

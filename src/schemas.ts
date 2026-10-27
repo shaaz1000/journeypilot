@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const AGENT_NAMES = ["flight", "hotel", "benefits", "destination"] as const;
+export const AGENT_NAMES = ["flight", "hotel", "benefits", "destination", "rights"] as const;
 export type AgentName = (typeof AGENT_NAMES)[number];
 
 /** How each agent's area is named to travellers. */
@@ -9,9 +9,10 @@ export const AGENT_LABELS: Record<AgentName, string> = {
   hotel: "hotel search",
   benefits: "lounge and card information",
   destination: "destination information",
+  rights: "passenger rights information",
 };
 
-export const TRAVEL_INTENTS = ["flight_search", "hotel_search", "lounge_benefits", "destination_info", "trip_planning"] as const;
+export const TRAVEL_INTENTS = ["flight_search", "hotel_search", "lounge_benefits", "destination_info", "passenger_rights", "trip_planning"] as const;
 export type TravelIntent = (typeof TRAVEL_INTENTS)[number];
 
 /** One earlier turn of the conversation, sent by the chat client with each new message. */

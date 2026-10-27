@@ -10,6 +10,7 @@ const AGENT_FOR_INTENT: Record<TravelIntent, AgentName | null> = {
   hotel_search: "hotel",
   lounge_benefits: "benefits",
   destination_info: "destination",
+  passenger_rights: "rights",
   // Planning is the orchestrator's own synthesis step; it needs at least one data intent alongside it.
   trip_planning: null,
 };

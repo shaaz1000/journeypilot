@@ -173,13 +173,15 @@ export interface Verdict {
 }
 
 const MAX_SOURCE_AGE_MS = 24 * 3_600_000;
+const SOURCE_BACKED = new Set<string>(["benefits", "rights", "transit"]);
 
 /** Checks that do not depend on wording: chosen references exist, sources are fresh, benefit answers have a page. */
 export function structuralFindings(results: SpecialistResult[], catalog: CatalogEntry[], unknownRefs: string[], now = Date.now()): string[] {
   const findings = unknownRefs.map((ref) => `answer referred to ${ref}, which no tool returned`);
-  const benefits = results.find((r) => r.agent === "benefits");
-  if (benefits && benefits.status !== "failed" && benefits.status !== "needs_input" && !catalog.some((c) => c.kind === "source")) {
-    findings.push("benefit answer has no fetched official page behind it");
+  // Agents whose answers are only as good as an official page must have fetched at least one.
+  for (const r of results) {
+    if (!SOURCE_BACKED.has(r.agent) || r.status === "failed" || r.status === "needs_input") continue;
+    if (!r.evidence.some((e) => e.citation)) findings.push(`${r.agent} answer has no fetched official page behind it`);
   }
   for (const c of catalog) {
     if (!c.citation) continue;

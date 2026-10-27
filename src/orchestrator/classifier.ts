@@ -11,6 +11,7 @@ Supported intents:
 - flight_search: finding or comparing flights, fares, routes, stops, baggage.
 - hotel_search: hotels or accommodation, room rates, total stay cost.
 - lounge_benefits: airport lounges, Priority Pass, lounge eligibility, guest fees, airport facilities, and credit or charge card benefits that relate to travel or lounge access.
+- passenger_rights: what the law says and what the airline must do when a flight is delayed, cancelled or overbooked: care (meals, hotel), rebooking, refunds and compensation.
 - destination_info: things to see and do in a city or country, the local time somewhere, and converting an amount of money between currencies for travel.
 - trip_planning: combining flights, hotels and lounges into an itinerary or travel budget. Always add the specific intents the plan needs as well.
 

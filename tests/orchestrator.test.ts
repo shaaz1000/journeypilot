@@ -264,6 +264,37 @@ describe("orchestrator: destination questions", () => {
   });
 });
 
+describe("orchestrator: passenger rights", () => {
+  it("delegates a delay question to the Rights agent, which cites the regulator", async () => {
+    const llm = new ScriptedLlm({
+      classify: () => classification({ intents: ["passenger_rights"], confidence: 0.9, travel_task: "Rights for a London to Delhi flight delayed 4 hours" }),
+      "agent:rights": (_req, n) =>
+        n === 0 ? toolCall("find_rights_sources", { query: "London to Delhi delayed 4 hours" })
+        : n === 1 ? toolCall("fetch_rights_page", { url: "https://www.caa.co.uk/air-passengers/travel-problems-and-rights/flight-delays-and-cancellations/delays/", query: "rights for a 4 hour delay" })
+        : text("Under UK rules you may be owed compensation."),
+      synthesise: () => composed({ summary: "As your flight leaves the UK, UK rules apply.", picks: [{ ref: "S1", comment: "Delays of more than three hours on arrival may bring compensation of up to 520 pounds, unless caused by extraordinary circumstances." }] }),
+    });
+    const { result, tracer } = await testOrchestrator({ llm }).orchestrator.handle("My London to Delhi flight is delayed 4 hours, what are my rights?");
+    expect(result.agentsUsed).toEqual(["rights"]);
+    expect(result.review.passed).toBe(true);
+    expect(result.citations[0]?.url).toContain("caa.co.uk");
+    expect(result.body).toContain("520 pounds");
+    expect(eventsOf(tracer.events, "tool").map((e) => e.tool)).toEqual(["find_rights_sources", "fetch_rights_page"]);
+  });
+
+  it("flags a rights answer that cites no fetched page", async () => {
+    const llm = new ScriptedLlm({
+      classify: () => classification({ intents: ["passenger_rights"], confidence: 0.9, travel_task: "Rights for a delayed flight" }),
+      "agent:rights": (_req, n) => (n === 0 ? toolCall("find_rights_sources", { query: "delay" }) : text("You are owed 600 euros.")),
+      synthesise: () => composed({ summary: "You are owed 600 euros." }),
+      judge: judge(["summary"]),
+    });
+    const { result } = await testOrchestrator({ llm }).orchestrator.handle("My flight is delayed, what am I owed?");
+    expect(result.review.findings).toContain("rights answer has no fetched official page behind it");
+    expect(result.body).not.toContain("600 euros");
+  });
+});
+
 describe("orchestrator: failures and grounding", () => {
   it("explains unavailable flight data without fabricating results", async () => {
     const kiwi = await fakeKiwi("error");
