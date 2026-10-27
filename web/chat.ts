@@ -10,7 +10,14 @@ interface ChatReply {
   limitations: string[];
 }
 
-const AGENT_NAMES: Record<string, string> = { flight: "flight search", hotel: "hotel search", benefits: "lounge and card benefits" };
+const AGENT_NAMES: Record<string, string> = {
+  flight: "flight search",
+  hotel: "hotel search",
+  benefits: "lounge and card benefits",
+  destination: "destination guide",
+  rights: "passenger rights",
+  transit: "transit and visa rules",
+};
 
 const thread = document.querySelector<HTMLElement>("#thread")!;
 const form = document.querySelector<HTMLFormElement>("#composer")!;

@@ -5,7 +5,8 @@ import type { AgentName, EvidenceRecord } from "../schemas.js";
 import type { Tracer } from "../trace/tracer.js";
 import { ToolError, type ToolDefinition } from "./types.js";
 
-export type ToolPermissions = Record<AgentName, readonly string[]>;
+// Agents left out have no tools at all.
+export type ToolPermissions = Partial<Record<AgentName, readonly string[]>>;
 
 export type ToolInvocation =
   | { ok: true; toolCallId: string; evidence: EvidenceRecord }

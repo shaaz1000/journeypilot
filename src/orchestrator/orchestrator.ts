@@ -1,6 +1,6 @@
 import { runSpecialist, type SpecialistConfig } from "../agents/specialist.js";
 import type { LlmClient } from "../llm/types.js";
-import { MAX_HISTORY_TURNS, type AgentName, type ChatTurn, type Citation, type FinalAnswer, type FinalStatus, type PolicyDecision, type RequiredDetail, type SpecialistResult } from "../schemas.js";
+import { AGENT_LABELS, MAX_HISTORY_TURNS, type AgentName, type ChatTurn, type Citation, type FinalAnswer, type FinalStatus, type PolicyDecision, type RequiredDetail, type SpecialistResult } from "../schemas.js";
 import type { ToolGateway } from "../tools/gateway.js";
 import type { Tracer } from "../trace/tracer.js";
 import { classify } from "./classifier.js";
@@ -147,7 +147,7 @@ function uniqueCitations(results: SpecialistResult[]): Citation[] {
   return [...byUrl.values()];
 }
 
-const SERVICE: Record<AgentName, string> = { flight: "flight search", hotel: "hotel search", benefits: "lounge and card information" };
+const SERVICE = AGENT_LABELS;
 
 /** Plain-language reason for a failure; the technical detail stays in the trace. */
 function failureNote(agent: AgentName, errors: string[]): string {

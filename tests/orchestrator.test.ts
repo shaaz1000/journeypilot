@@ -245,6 +245,25 @@ describe("orchestrator: delegation and tool use", () => {
   });
 });
 
+describe("orchestrator: destination questions", () => {
+  it("delegates currency and local time to the Destination agent and renders the figures from the data", async () => {
+    const llm = new ScriptedLlm({
+      classify: () => classification({ intents: ["destination_info"], confidence: 0.9, travel_task: "Convert 250 GBP to INR and give the local time in Doha" }),
+      "agent:destination": (_req, n) =>
+        n === 0 ? { content: null, toolCalls: [
+          { id: "c1", type: "function", function: { name: "convert_currency", arguments: JSON.stringify({ amount: 250, from: "GBP", to: "INR" }) } },
+          { id: "c2", type: "function", function: { name: "get_local_time", arguments: JSON.stringify({ place: "Doha" }) } },
+        ], finishReason: "tool_calls" } : text("done"),
+      synthesise: () => composed({ summary: "Here is the conversion and the time in Doha.", picks: [{ ref: "X1" }, { ref: "X2" }] }),
+    });
+    const { result, tracer } = await testOrchestrator({ llm }).orchestrator.handle("How much is 250 GBP in rupees, and what time is it in Doha?");
+    expect(result.agentsUsed).toEqual(["destination"]);
+    expect(result.body).toContain("**250 GBP = 31,695 INR**");
+    expect(result.body).toContain("**Local time in Doha, Qatar: 17:30**");
+    expect(eventsOf(tracer.events, "tool").map((e) => e.tool)).toEqual(["convert_currency", "get_local_time"]);
+  });
+});
+
 describe("orchestrator: failures and grounding", () => {
   it("explains unavailable flight data without fabricating results", async () => {
     const kiwi = await fakeKiwi("error");

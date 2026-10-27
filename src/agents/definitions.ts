@@ -7,6 +7,7 @@ export const TOOL_PERMISSIONS: ToolPermissions = {
   flight: ["search_flights"],
   hotel: ["search_hotels"],
   benefits: ["find_official_sources", "fetch_official_page"],
+  destination: ["convert_currency", "get_local_time", "find_things_to_do"],
 };
 
 export const SPECIALISTS: Record<AgentName, SpecialistConfig> = {
@@ -39,5 +40,13 @@ Answer in under 180 words.`,
 - Include caveats: eligibility, visit limits, guest fees, and that terms change, so the traveller should confirm with the issuer.
 - If no official page covers the question, say so instead of answering from memory.
 Answer in under 200 words.`,
+  },
+  destination: {
+    name: "destination",
+    maxSteps: 4,
+    systemPrompt: `You are the JourneyPilot Destination Agent. You answer questions about a place: what to see and do there, its local time, and what an amount of money is worth in another currency.
+- Use find_things_to_do for sights and activities in a city or country, get_local_time for the current local time, and convert_currency for money (3-letter codes such as GBP, INR, AED).
+- Call only the tools the question needs. Report only what the tools return; never estimate an exchange rate or a time yourself.
+Answer in under 180 words.`,
   },
 };

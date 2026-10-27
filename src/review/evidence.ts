@@ -6,7 +6,7 @@ import type { Citation, SpecialistResult } from "../schemas.js";
  */
 export interface CatalogEntry {
   ref: string;
-  kind: "flight" | "hotel" | "source";
+  kind: "flight" | "hotel" | "place" | "fact" | "source" | "unavailable";
   line: string;
   facts: unknown;
   citation?: Citation;
@@ -87,24 +87,73 @@ function hotelLine(h: Hotel): string {
   return `**${markdownText(h.name)}** (${markdownText(h.area)}, demo data): ${h.nightlyRate} ${h.currency} per night, ${h.totalStayCost} ${h.currency} in total for ${h.nights} night${h.nights === 1 ? "" : "s"}, breakfast ${h.breakfastIncluded ? "included" : "not included"}. ${markdownText(h.cancellation)}.`;
 }
 
+interface Conversion {
+  amount: number;
+  from: string;
+  to: string;
+  rate: number;
+  converted: number;
+  rateDate: string;
+  source: string;
+}
+
+interface LocalTime {
+  place: string;
+  country?: string;
+  timezone: string;
+  utcOffset: string;
+  localTime: string;
+  localDate: string;
+}
+
+interface GuideSection {
+  title: string;
+  items: { name: string; description: string }[];
+}
+
+const number = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 });
+
+/** Facts are rendered by code from the tool output, so their figures cannot drift from the data. */
+function factLine(tool: string, data: unknown): string | null {
+  if (tool === "convert_currency") {
+    const c = data as Conversion;
+    return `**${number.format(c.amount)} ${c.from} = ${number.format(c.converted)} ${c.to}** at ${c.rate} (${markdownText(c.source)}, ${c.rateDate}).`;
+  }
+  if (tool === "get_local_time") {
+    const t = data as LocalTime;
+    return `**Local time in ${markdownText(t.place)}${t.country ? `, ${markdownText(t.country)}` : ""}: ${t.localTime}** on ${t.localDate} (${t.timezone}, ${t.utcOffset}).`;
+  }
+  return null;
+}
+
 /** Builds the numbered catalog of everything the tools returned that an answer may show. */
 export function buildCatalog(results: SpecialistResult[]): CatalogEntry[] {
   const catalog: CatalogEntry[] = [];
-  let f = 0;
-  let h = 0;
-  let s = 0;
+  const counters: Record<string, number> = {};
+  const next = (prefix: string) => `${prefix}${(counters[prefix] = (counters[prefix] ?? 0) + 1)}`;
   for (const e of results.flatMap((r) => r.evidence)) {
-    const data = e.data as { itineraries?: Itinerary[]; hotels?: Hotel[]; excerpts?: string[] };
+    const data = e.data as { itineraries?: Itinerary[]; hotels?: Hotel[]; excerpts?: string[]; sections?: GuideSection[]; place?: string };
     if (e.tool === "search_flights" && Array.isArray(data.itineraries)) {
-      for (const it of data.itineraries) catalog.push({ ref: `F${++f}`, kind: "flight", line: flightLine(it), facts: it });
+      for (const it of data.itineraries) catalog.push({ ref: next("F"), kind: "flight", line: flightLine(it), facts: it });
     } else if (e.tool === "search_hotels" && Array.isArray(data.hotels)) {
-      for (const hotel of data.hotels) catalog.push({ ref: `H${++h}`, kind: "hotel", line: hotelLine(hotel), facts: hotel });
-    } else if (e.tool === "fetch_official_page" && e.citation) {
+      for (const hotel of data.hotels) catalog.push({ ref: next("H"), kind: "hotel", line: hotelLine(hotel), facts: hotel });
+    } else if (e.tool === "find_things_to_do" && Array.isArray(data.sections)) {
+      for (const section of data.sections) {
+        for (const item of section.items) {
+          catalog.push({ ref: next("P"), kind: "place", line: `**${markdownText(item.name)}**: ${markdownText(item.description)}`, facts: { place: data.place, section: section.title, ...item } });
+        }
+      }
+    } else {
+      const line = factLine(e.tool, e.data);
+      if (line) catalog.push({ ref: next("X"), kind: "fact", line, facts: e.data });
+    }
+    // Every cited page or guide is a source the answer can point to.
+    if (e.citation) {
       catalog.push({
-        ref: `S${++s}`,
+        ref: next("S"),
         kind: "source",
         line: link(e.citation.title, e.citation.url),
-        facts: { title: e.citation.title, url: e.citation.url, excerpts: data.excerpts ?? [] },
+        facts: { title: e.citation.title, url: e.citation.url, excerpts: data.excerpts, sections: e.tool === "find_things_to_do" ? undefined : data.sections },
         citation: e.citation,
       });
     }

@@ -11,6 +11,23 @@ const BLOCKS = new Set([
 const MAX_PASSAGE = 500;
 const MIN_PASSAGE = 40;
 
+/** Classes of machine-readable or print-only markers (map coordinates, references) that are not reading text. */
+const SKIPPED_CLASSES = ["geo", "listing-coordinates", "noprint", "mw-ref", "reference"];
+
+/** Visible text of a node: like textContent, but skipping scripts, styles and other non-content elements. */
+export function visibleText(node: ChildNode): string {
+  if (node.type === "text") return (node as { data: string }).data;
+  if ("name" in node && "children" in node) {
+    const el = node as Element;
+    if (SKIPPED.has(el.name)) return "";
+    const classes = (el.attribs?.class ?? "").split(" ");
+    if (SKIPPED_CLASSES.some((c) => classes.includes(c))) return "";
+    // Spaces separate block-level children only; inline children ("Museum</span>, on") join as written.
+    return el.children.map((child) => ("name" in child && BLOCKS.has((child as Element).name) ? ` ${visibleText(child)} ` : visibleText(child))).join("");
+  }
+  return "";
+}
+
 /** Collapses runs of whitespace to single spaces without pattern matching. */
 export function normaliseSpace(text: string): string {
   let out = "";

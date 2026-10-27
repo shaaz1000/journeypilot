@@ -9,6 +9,7 @@ import { Orchestrator } from "../src/orchestrator/orchestrator.js";
 import { createFetchOfficialPageTool, findOfficialSourcesTool } from "../src/tools/benefits.js";
 import { createFlightSearchTool } from "../src/tools/flights.js";
 import { ToolGateway } from "../src/tools/gateway.js";
+import { createCurrencyTool, createLocalTimeTool, createThingsToDoTool } from "../src/tools/destination.js";
 import { searchHotelsTool } from "../src/tools/hotels.js";
 import { Tracer, type TraceEvent } from "../src/trace/tracer.js";
 
@@ -143,6 +144,27 @@ export const AMEX_PAGE = `<html><head><title>Platinum Card | AMEX UK</title></he
 <p>Priority Pass membership: cardmembers get complimentary access to Priority Pass lounges worldwide for the cardmember and one guest.</p>
 <p>Additional guests are charged at GBP 24 per guest per visit.</p></body></html>`;
 
+/** Offline stand-ins for the exchange-rate, geocoding and Wikivoyage services. */
+export const destinationFetch: typeof fetch = async (input) => {
+  const url = String(input);
+  if (url.startsWith("https://api.frankfurter.dev/")) {
+    if (url.includes("base=AED")) return new Response("{}", { status: 404 });
+    return Response.json({ amount: 1, base: "GBP", date: "2026-10-27", rates: { INR: 126.78 } });
+  }
+  if (url.startsWith("https://open.er-api.com/")) return Response.json({ result: "success", time_last_update_utc: "Tue, 27 Oct 2026 00:02:31 +0000", rates: { INR: 25.94 } });
+  if (url.startsWith("https://geocoding-api.open-meteo.com/")) return Response.json({ results: [{ name: "Doha", country: "Qatar", timezone: "Asia/Qatar", latitude: 25.28, longitude: 51.53 }] });
+  if (url.startsWith("https://en.wikivoyage.org/")) {
+    const html = `<div class="mw-parser-output">
+      <div class="mw-heading mw-heading2"><h2 id="See">See</h2></div>
+      <ul><li><span class="geo">25.29 51.53</span><span class="listing-name"><b>Museum of Islamic Art</b></span>, on the Corniche. One of the finest collections of Islamic art in the world.</li></ul>
+      <div class="mw-heading mw-heading2"><h2 id="Get_in">Get in</h2></div>
+      <p>The Doha Metro Red Line runs from Hamad International Airport to the city centre in about 20 minutes.</p>
+    </div>`;
+    return Response.json({ parse: { title: "Doha", text: html } });
+  }
+  return new Response("not found", { status: 404 });
+};
+
 export interface TestAppOptions {
   llm: LlmClient;
   kiwi?: McpConnection | null;
@@ -155,6 +177,9 @@ export function testOrchestrator({ llm, kiwi = null, fetchImpl }: TestAppOptions
       createFlightSearchTool({ connect: async () => { if (!kiwi) throw new Error("test: no MCP connection"); return kiwi; }, serverName: "kiwi", timeoutMs: 2000 }),
       searchHotelsTool,
       findOfficialSourcesTool,
+      createCurrencyTool(destinationFetch),
+      createLocalTimeTool(destinationFetch, () => new Date("2026-11-02T14:30:00Z")),
+      createThingsToDoTool(destinationFetch),
       createFetchOfficialPageTool(fetchImpl ?? (async () => pageResponse(AMEX_PAGE)), 2000),
     ],
     TOOL_PERMISSIONS,
