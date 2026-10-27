@@ -1,6 +1,0 @@
-- generic [ref=f3e2]:
-  - link [ref=f3e4] [cursor=pointer]:
-    - /url: https://www.goindigo.in
-  - generic [ref=f3e6]:
-    - heading "Something went wrong" [level=1] [ref=f3e7]
-    - paragraph [ref=f3e8]: Please contact our customer support team.
