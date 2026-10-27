@@ -55,19 +55,35 @@ export async function createApp(config: AppConfig, overrides: AppOverrides = {})
   // The MCP server is optional at runtime: if it is down, flight search reports itself unavailable instead of failing startup.
   const mcp: McpStatus = { server: "kiwi", url: config.KIWI_MCP_URL, connected: false, discoveredTools: [] };
   let connection: McpConnection | null = null;
-  try {
-    connection = await openWithRetry(() => McpConnection.open("kiwi", () => new StreamableHTTPClientTransport(new URL(config.KIWI_MCP_URL)), config.MCP_TIMEOUT_MS));
-    mcp.connected = true;
-    mcp.discoveredTools = connection.tools.map((t) => t.name);
-    mcp.flightTool = findFlightSearchTool(connection.tools)?.name;
-    if (!mcp.flightTool) mcp.error = "connected, but no tool with a flight search schema was advertised";
-  } catch (error) {
-    mcp.error = `could not connect: ${error instanceof Error ? error.message : String(error)}`;
-  }
+  let connecting: Promise<McpConnection> | null = null;
+  // Opens the Kiwi session on first use and again after a failed attempt, so a network blip at startup
+  // does not leave flight search unavailable for the life of the process.
+  const connect = (): Promise<McpConnection> => {
+    if (connection) return Promise.resolve(connection);
+    connecting ??= openWithRetry(() => McpConnection.open("kiwi", () => new StreamableHTTPClientTransport(new URL(config.KIWI_MCP_URL)), config.MCP_TIMEOUT_MS))
+      .then((opened) => {
+        connection = opened;
+        mcp.connected = true;
+        mcp.error = undefined;
+        mcp.discoveredTools = opened.tools.map((t) => t.name);
+        mcp.flightTool = findFlightSearchTool(opened.tools)?.name;
+        if (!mcp.flightTool) mcp.error = "connected, but no tool with a flight search schema was advertised";
+        return opened;
+      })
+      .catch((error: unknown) => {
+        mcp.error = `could not connect: ${error instanceof Error ? error.message : String(error)}`;
+        throw error;
+      })
+      .finally(() => {
+        connecting = null;
+      });
+    return connecting;
+  };
+  await connect().catch(() => undefined);
 
   const gateway = new ToolGateway(
     [
-      createFlightSearchTool({ connection, timeoutMs: config.MCP_TIMEOUT_MS, unavailableReason: mcp.error }),
+      createFlightSearchTool({ connect, serverName: "kiwi", timeoutMs: config.MCP_TIMEOUT_MS }),
       searchHotelsTool,
       findOfficialSourcesTool,
       createFetchOfficialPageTool(fetch, 20_000, new NvidiaEmbedder({ apiKey: config.NVIDIA_API_KEY, baseUrl: config.NVIDIA_BASE_URL, model: config.NVIDIA_EMBED_MODEL, timeoutMs: 15_000 })),

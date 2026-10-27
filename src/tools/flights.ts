@@ -100,27 +100,32 @@ export function condenseFlights(raw: unknown, limit = 5) {
 }
 
 export interface FlightToolOptions {
-  connection: McpConnection | null;
+  /** Returns the live MCP session, opening one if there is none; throws when the server cannot be reached. */
+  connect: () => Promise<McpConnection>;
+  serverName: string;
   timeoutMs: number;
-  /** Why the provider is unavailable, when connection or discovery failed at startup. */
-  unavailableReason?: string;
 }
 
-export function createFlightSearchTool({ connection, timeoutMs, unavailableReason }: FlightToolOptions): ToolDefinition {
-  const providerTool = connection ? findFlightSearchTool(connection.tools) : undefined;
+export function createFlightSearchTool({ connect, serverName, timeoutMs }: FlightToolOptions): ToolDefinition {
   return defineTool({
     name: "search_flights",
     description: "Search live flights (Kiwi.com via MCP). Returns up to 5 itineraries with price, duration, stops, route, baggage and booking link.",
     input: SearchFlightsInput,
     source: "mcp",
-    server: connection?.serverName ?? "kiwi",
+    server: serverName,
     timeoutMs,
     // Connection drops to the public endpoint are common enough that one retry was not always sufficient.
     retries: 2,
     async execute(args, { signal }) {
-      if (!connection || !providerTool) {
-        throw new ToolError(`flight provider unavailable: ${unavailableReason ?? "no flight search tool discovered on the MCP server"}`, "provider");
+      let connection: McpConnection;
+      try {
+        connection = await connect();
+      } catch (error) {
+        // Retryable: the gateway's next attempt tries to connect again.
+        throw new ToolError(`flight provider unavailable: could not connect: ${error instanceof Error ? error.message : String(error)}`, "provider", true);
       }
+      const providerTool = findFlightSearchTool(connection.tools);
+      if (!providerTool) throw new ToolError("flight provider unavailable: no flight search tool discovered on the MCP server", "provider");
       const providerArgs: Record<string, unknown> = {
         flyFrom: args.origin,
         flyTo: args.destination,

@@ -11,7 +11,7 @@ afterEach(async () => cleanup?.());
 async function setup(behaviour: Parameters<typeof fakeKiwi>[0] = "ok") {
   const kiwi = await fakeKiwi(behaviour);
   cleanup = kiwi.close;
-  const gateway = new ToolGateway([createFlightSearchTool({ connection: kiwi.connection, timeoutMs: 2000 })], permissions);
+  const gateway = new ToolGateway([createFlightSearchTool({ connect: async () => kiwi.connection, serverName: "kiwi", timeoutMs: 2000 })], permissions);
   return { kiwi, gateway };
 }
 
@@ -76,9 +76,23 @@ describe("Kiwi MCP integration", () => {
     expect(kiwi.received).toHaveLength(0);
   });
 
-  it("reports the provider as unavailable when there is no connection", async () => {
-    const gateway = new ToolGateway([createFlightSearchTool({ connection: null, timeoutMs: 100, unavailableReason: "could not connect" })], permissions);
+  it("tries to connect again on each attempt when the server was unreachable", async () => {
+    const kiwi = await fakeKiwi();
+    cleanup = kiwi.close;
+    let calls = 0;
+    const connect = async () => {
+      if (++calls === 1) throw new Error("fetch failed");
+      return kiwi.connection;
+    };
+    const gateway = new ToolGateway([createFlightSearchTool({ connect, serverName: "kiwi", timeoutMs: 2000 })], permissions);
+    const tracer = new Tracer();
+    expect((await gateway.invoke("flight", "search_flights", args, tracer)).ok).toBe(true);
+    expect(eventsOf(tracer.events, "tool")[0]).toMatchObject({ status: "ok", attempts: 2 });
+  });
+
+  it("reports the provider as unavailable when it never becomes reachable", async () => {
+    const gateway = new ToolGateway([createFlightSearchTool({ connect: async () => { throw new Error("fetch failed"); }, serverName: "kiwi", timeoutMs: 100 })], permissions);
     const result = await gateway.invoke("flight", "search_flights", args, new Tracer());
-    expect(!result.ok && result.error.message).toMatch(/unavailable: could not connect/);
+    expect(!result.ok && result.error.message).toContain("unavailable: could not connect: fetch failed");
   });
 });

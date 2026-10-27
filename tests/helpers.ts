@@ -152,7 +152,7 @@ export interface TestAppOptions {
 export function testOrchestrator({ llm, kiwi = null, fetchImpl }: TestAppOptions) {
   const gateway = new ToolGateway(
     [
-      createFlightSearchTool({ connection: kiwi, timeoutMs: 2000, unavailableReason: kiwi ? undefined : "test: no MCP connection" }),
+      createFlightSearchTool({ connect: async () => { if (!kiwi) throw new Error("test: no MCP connection"); return kiwi; }, serverName: "kiwi", timeoutMs: 2000 }),
       searchHotelsTool,
       findOfficialSourcesTool,
       createFetchOfficialPageTool(fetchImpl ?? (async () => pageResponse(AMEX_PAGE)), 2000),
