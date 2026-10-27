@@ -28,8 +28,9 @@ function walk(value: unknown, visit: (key: string, inner: unknown) => void): voi
 }
 
 /** Prices and links the tools themselves returned, excluding anything the model supplied as input. */
-export function groundedFacts(results: SpecialistResult[], citations: Citation[]): { prices: Set<number>; urls: Set<string> } {
+export function groundedFacts(results: SpecialistResult[], citations: Citation[]): { prices: Set<number>; differences: Set<number>; urls: Set<string> } {
   const prices = new Set<number>();
+  const differences = new Set<number>();
   const urls = new Set(citations.map((c) => c.url));
   const evidence = results.flatMap((r) => r.evidence);
   for (const e of evidence) {
@@ -38,16 +39,20 @@ export function groundedFacts(results: SpecialistResult[], citations: Citation[]
       const excerpts = (e.data as { excerpts?: unknown }).excerpts;
       for (const text of Array.isArray(excerpts) ? excerpts : []) if (typeof text === "string") moneyAmounts(text).forEach((n) => prices.add(n));
     }
+    const recordPrices: number[] = [];
     walk(e.data, (key, inner) => {
       if (e.dataSource === "official_page") {
         if (key === "url" && typeof inner === "string") urls.add(inner);
         return;
       }
-      if (PRICE_FIELDS.has(key) && typeof inner === "number") prices.add(round(inner));
+      if (PRICE_FIELDS.has(key) && typeof inner === "number") recordPrices.push(round(inner));
       if (URL_FIELDS.has(key) && typeof inner === "string") urls.add(inner);
     });
+    recordPrices.forEach((p) => prices.add(p));
+    // Differences only within one tool result (one search, one currency), e.g. "a £20 premium" between two fares.
+    for (const a of recordPrices) for (const b of recordPrices) if (a > b) differences.add(round(a - b));
   }
-  return { prices, urls };
+  return { prices, differences, urls };
 }
 
 export function moneyAmounts(text: string): number[] {
@@ -58,12 +63,6 @@ export function moneyAmounts(text: string): number[] {
   });
 }
 
-/** True when the amount is exactly the gap between two grounded prices, e.g. "a £20 premium" over two fares. */
-function isDifferenceOf(amount: number, prices: Set<number>): boolean {
-  const list = [...prices];
-  return list.some((a) => list.some((b) => a > b && round(a - b) === amount));
-}
-
 /**
  * Deterministic grounding check of the model-written answer body against recorded tool output.
  * Run it before sources and limitations are appended, so code-added text cannot mask a failure.
@@ -71,10 +70,10 @@ function isDifferenceOf(amount: number, prices: Set<number>): boolean {
 export function reviewAnswer(body: string, results: SpecialistResult[], citations: Citation[], now = Date.now()): ReviewResult {
   const findings: string[] = [];
   const evidence = results.flatMap((r) => r.evidence);
-  const { prices, urls } = groundedFacts(results, citations);
+  const { prices, differences, urls } = groundedFacts(results, citations);
 
   for (const amount of moneyAmounts(body)) {
-    if (!prices.has(amount) && !isDifferenceOf(amount, prices)) findings.push(`price ${amount} does not appear in any tool result`);
+    if (!prices.has(amount) && !differences.has(amount)) findings.push(`price ${amount} does not appear in any tool result`);
   }
   for (const url of body.match(URL) ?? []) {
     const clean = url.replace(/[.,;:]+$/, "");
