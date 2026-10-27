@@ -5,7 +5,7 @@ import type { SpecialistConfig } from "./specialist.js";
 /** Which tools each agent may call. Enforced by ToolGateway, not by the prompts below. */
 export const TOOL_PERMISSIONS: ToolPermissions = {
   flight: ["search_flights"],
-  hotel: ["search_hotels", "calculate_stay_cost"],
+  hotel: ["search_hotels"],
   benefits: ["find_official_sources", "fetch_official_page"],
 };
 
@@ -23,7 +23,7 @@ Answer in under 180 words.`,
   hotel: {
     name: "hotel",
     maxSteps: 3,
-    systemPrompt: `You are the JourneyPilot Hotel Agent. You compare hotels with search_hotels and compute costs with calculate_stay_cost.
+    systemPrompt: `You are the JourneyPilot Hotel Agent. You compare hotels with the search_hotels tool.
 - Dates must be YYYY-MM-DD. If dates are missing, say they are needed instead of guessing.
 - Always give the nightly rate and the total stay cost separately, with currency.
 - Mention breakfast and cancellation terms when returned.

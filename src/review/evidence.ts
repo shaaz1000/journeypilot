@@ -33,25 +33,19 @@ export function groundedFacts(results: SpecialistResult[], citations: Citation[]
   const urls = new Set(citations.map((c) => c.url));
   const evidence = results.flatMap((r) => r.evidence);
   for (const e of evidence) {
-    if (e.dataSource === "computed") continue;
     if (e.dataSource === "official_page") {
       // Official page text is provider content; amounts quoted in it (guest fees, visit charges) are grounded.
       const excerpts = (e.data as { excerpts?: unknown }).excerpts;
       for (const text of Array.isArray(excerpts) ? excerpts : []) if (typeof text === "string") moneyAmounts(text).forEach((n) => prices.add(n));
-      continue;
     }
     walk(e.data, (key, inner) => {
+      if (e.dataSource === "official_page") {
+        if (key === "url" && typeof inner === "string") urls.add(inner);
+        return;
+      }
       if (PRICE_FIELDS.has(key) && typeof inner === "number") prices.add(round(inner));
       if (URL_FIELDS.has(key) && typeof inner === "string") urls.add(inner);
     });
-  }
-  // A computed total is grounded only when the rate it was computed from is itself grounded.
-  for (const e of evidence) {
-    const d = e.data as { nightlyRate?: number; subtotal?: number; total?: number };
-    if (e.dataSource === "computed" && d.nightlyRate !== undefined && prices.has(round(d.nightlyRate))) {
-      if (d.subtotal !== undefined) prices.add(round(d.subtotal));
-      if (d.total !== undefined) prices.add(round(d.total));
-    }
   }
   return { prices, urls };
 }
@@ -64,6 +58,12 @@ export function moneyAmounts(text: string): number[] {
   });
 }
 
+/** True when the amount is exactly the gap between two grounded prices, e.g. "a £20 premium" over two fares. */
+function isDifferenceOf(amount: number, prices: Set<number>): boolean {
+  const list = [...prices];
+  return list.some((a) => list.some((b) => a > b && round(a - b) === amount));
+}
+
 /**
  * Deterministic grounding check of the model-written answer body against recorded tool output.
  * Run it before sources and limitations are appended, so code-added text cannot mask a failure.
@@ -74,7 +74,7 @@ export function reviewAnswer(body: string, results: SpecialistResult[], citation
   const { prices, urls } = groundedFacts(results, citations);
 
   for (const amount of moneyAmounts(body)) {
-    if (!prices.has(amount)) findings.push(`price ${amount} does not appear in any tool result`);
+    if (!prices.has(amount) && !isDifferenceOf(amount, prices)) findings.push(`price ${amount} does not appear in any tool result`);
   }
   for (const url of body.match(URL) ?? []) {
     const clean = url.replace(/[.,;:]+$/, "");
@@ -84,7 +84,7 @@ export function reviewAnswer(body: string, results: SpecialistResult[], citation
     findings.push("demo hotel data is not labelled as demo");
   }
   const benefits = results.find((r) => r.agent === "benefits");
-  if (benefits && benefits.status !== "failed" && !evidence.some((e) => e.dataSource === "official_page")) {
+  if (benefits && benefits.status !== "failed" && !evidence.some((e) => e.dataSource === "official_page" && e.citation)) {
     findings.push("benefit answer has no fetched official page behind it");
   }
   for (const c of citations) {
@@ -111,7 +111,9 @@ export function evidenceDigest(results: SpecialistResult[]): string {
           lines.push(`- ${h.name}: ${h.nightlyRate} ${h.currency} per night, ${h.totalStayCost} ${h.currency} total for ${h.nights} nights`);
         }
       } else if (e.citation) {
-        lines.push(`Official source consulted: ${e.citation.title} (${e.citation.url})`);
+        lines.push(`From ${e.citation.title} (${e.citation.url}):`);
+        const excerpts = Array.isArray(data.excerpts) ? (data.excerpts as string[]) : [];
+        for (const text of excerpts.slice(0, 2)) lines.push(`> "${text.slice(0, 300)}${text.length > 300 ? "..." : ""}"`);
       }
     }
   }

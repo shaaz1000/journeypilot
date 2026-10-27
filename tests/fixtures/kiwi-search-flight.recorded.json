@@ -1,0 +1,206 @@
+{
+ "query": "LHR \u2192 JFK on 10/12/2026, 1 adult",
+ "currency": "GBP",
+ "passengers": {
+  "adults": 1,
+  "children": 0,
+  "infants": 0
+ },
+ "resultsCount": 3,
+ "itineraries": [
+  {
+   "id": "0f6420a1513d0000c935adf3_0|0f6420a1513d0000c935adf3_1",
+   "price": 300,
+   "priceFormatted": "300 GBP",
+   "totalDurationSeconds": 45600,
+   "bookingUrl": "https://kiwi.com/u/nz9bgws",
+   "imageId": "new-york-city_ny_us",
+   "baggage": {
+    "personalItem": 1,
+    "cabinBag": 1,
+    "checkedBag": 0
+   },
+   "outbound": {
+    "from": "LHR",
+    "to": "JFK",
+    "departureTime": "2026-12-10T12:25:00",
+    "arrivalTime": "2026-12-10T20:05:00",
+    "durationSeconds": 45600,
+    "stops": 1,
+    "route": [
+     "LHR",
+     "LIS",
+     "JFK"
+    ],
+    "cabinClass": "Economy",
+    "segments": [
+     {
+      "from": "LHR",
+      "to": "LIS",
+      "fromCity": "London",
+      "toCity": "Lisbon",
+      "fromName": "Heathrow",
+      "toName": "Lisbon Portela",
+      "fromCountry": "United Kingdom",
+      "toCountry": "Portugal",
+      "departureTime": "2026-12-10T12:25:00",
+      "arrivalTime": "2026-12-10T15:15:00",
+      "durationSeconds": 10200,
+      "carrier": "TP",
+      "carrierName": "TAP Portugal",
+      "flightNumber": "TP1367",
+      "cabinClass": "Economy"
+     },
+     {
+      "from": "LIS",
+      "to": "JFK",
+      "fromCity": "Lisbon",
+      "toCity": "New York",
+      "fromName": "Lisbon Portela",
+      "toName": "John F. Kennedy International",
+      "fromCountry": "Portugal",
+      "toCountry": "United States",
+      "departureTime": "2026-12-10T16:35:00",
+      "arrivalTime": "2026-12-10T20:05:00",
+      "durationSeconds": 30600,
+      "carrier": "TP",
+      "carrierName": "TAP Portugal",
+      "flightNumber": "TP209",
+      "cabinClass": "Economy"
+     }
+    ]
+   },
+   "inbound": null
+  },
+  {
+   "id": "0f6420a1513d00001cf55872_0|0f6420a1513d00001cf55872_1",
+   "price": 300,
+   "priceFormatted": "300 GBP",
+   "totalDurationSeconds": 60600,
+   "bookingUrl": "https://kiwi.com/u/z7s7bdc",
+   "imageId": "new-york-city_ny_us",
+   "baggage": {
+    "personalItem": 1,
+    "cabinBag": 1,
+    "checkedBag": 0
+   },
+   "outbound": {
+    "from": "LHR",
+    "to": "JFK",
+    "departureTime": "2026-12-10T08:15:00",
+    "arrivalTime": "2026-12-10T20:05:00",
+    "durationSeconds": 60600,
+    "stops": 1,
+    "route": [
+     "LHR",
+     "LIS",
+     "JFK"
+    ],
+    "cabinClass": "Economy",
+    "segments": [
+     {
+      "from": "LHR",
+      "to": "LIS",
+      "fromCity": "London",
+      "toCity": "Lisbon",
+      "fromName": "Heathrow",
+      "toName": "Lisbon Portela",
+      "fromCountry": "United Kingdom",
+      "toCountry": "Portugal",
+      "departureTime": "2026-12-10T08:15:00",
+      "arrivalTime": "2026-12-10T11:05:00",
+      "durationSeconds": 10200,
+      "carrier": "TP",
+      "carrierName": "TAP Portugal",
+      "flightNumber": "TP1351",
+      "cabinClass": "Economy"
+     },
+     {
+      "from": "LIS",
+      "to": "JFK",
+      "fromCity": "Lisbon",
+      "toCity": "New York",
+      "fromName": "Lisbon Portela",
+      "toName": "John F. Kennedy International",
+      "fromCountry": "Portugal",
+      "toCountry": "United States",
+      "departureTime": "2026-12-10T16:35:00",
+      "arrivalTime": "2026-12-10T20:05:00",
+      "durationSeconds": 30600,
+      "carrier": "TP",
+      "carrierName": "TAP Portugal",
+      "flightNumber": "TP209",
+      "cabinClass": "Economy"
+     }
+    ]
+   },
+   "inbound": null
+  },
+  {
+   "id": "0f6420a1513d00009e5bcf22_0|0f6420a1513d00009e5bcf22_1",
+   "price": 300,
+   "priceFormatted": "300 GBP",
+   "totalDurationSeconds": 68700,
+   "bookingUrl": "https://kiwi.com/u/5nksp5",
+   "imageId": "new-york-city_ny_us",
+   "baggage": {
+    "personalItem": 1,
+    "cabinBag": 1,
+    "checkedBag": 0
+   },
+   "outbound": {
+    "from": "LHR",
+    "to": "JFK",
+    "departureTime": "2026-12-10T06:00:00",
+    "arrivalTime": "2026-12-10T20:05:00",
+    "durationSeconds": 68700,
+    "stops": 1,
+    "route": [
+     "LHR",
+     "LIS",
+     "JFK"
+    ],
+    "cabinClass": "Economy",
+    "segments": [
+     {
+      "from": "LHR",
+      "to": "LIS",
+      "fromCity": "London",
+      "toCity": "Lisbon",
+      "fromName": "Heathrow",
+      "toName": "Lisbon Portela",
+      "fromCountry": "United Kingdom",
+      "toCountry": "Portugal",
+      "departureTime": "2026-12-10T06:00:00",
+      "arrivalTime": "2026-12-10T08:50:00",
+      "durationSeconds": 10200,
+      "carrier": "TP",
+      "carrierName": "TAP Portugal",
+      "flightNumber": "TP1363",
+      "cabinClass": "Economy"
+     },
+     {
+      "from": "LIS",
+      "to": "JFK",
+      "fromCity": "Lisbon",
+      "toCity": "New York",
+      "fromName": "Lisbon Portela",
+      "toName": "John F. Kennedy International",
+      "fromCountry": "Portugal",
+      "toCountry": "United States",
+      "departureTime": "2026-12-10T16:35:00",
+      "arrivalTime": "2026-12-10T20:05:00",
+      "durationSeconds": 30600,
+      "carrier": "TP",
+      "carrierName": "TAP Portugal",
+      "flightNumber": "TP209",
+      "cabinClass": "Economy"
+     }
+    ]
+   },
+   "inbound": null
+  }
+ ],
+ "searchTimeMs": 631,
+ "error": null
+}

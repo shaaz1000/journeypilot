@@ -38,7 +38,7 @@ export interface EvidenceRecord {
   tool: string;
   source: "mcp" | "local";
   server?: string;
-  dataSource: "live" | "demo_fixture" | "official_page" | "computed";
+  dataSource: "live" | "demo_fixture" | "official_page";
   data: unknown;
   citation?: Citation;
 }

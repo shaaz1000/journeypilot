@@ -42,7 +42,7 @@ sections after it are the plan as it is being built.
 |-----------|----------------|--------------------------------|
 | Orchestrator | Classifies and plans with one structured LLM call, applies the policy gate, dispatches specialists, runs the evidence review, writes the final answer. | `classify_request` (structured output only). No specialist tools. |
 | Flight Agent | Flight search and comparison. | `search_flights`, backed by the Kiwi MCP tool discovered at startup. |
-| Hotel Agent | Hotel comparison and stay cost. | `search_hotels` (demo fixture), `calculate_stay_cost`. |
+| Hotel Agent | Hotel comparison and stay cost. | `search_hotels` (demo fixture; returns nightly rate and total stay cost). |
 | Benefits Agent | Lounge access, Priority Pass, card benefits. | `find_official_sources`, `fetch_official_page` (domain allowlist). |
 | Evidence Reviewer | Grounding, citation, demo labelling and freshness checks. | None. Deterministic code. |
 

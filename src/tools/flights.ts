@@ -37,6 +37,7 @@ const Leg = z.object({
 
 const ProviderResponse = z.object({
   currency: z.string(),
+  error: z.unknown().optional(),
   resultsCount: z.number().optional(),
   itineraries: z.array(
     z.object({
@@ -46,7 +47,8 @@ const ProviderResponse = z.object({
       bookingUrl: z.string().url(),
       baggage: z.object({ personalItem: z.number(), cabinBag: z.number(), checkedBag: z.number() }).partial().optional(),
       outbound: Leg,
-      inbound: Leg.optional(),
+      // One-way results carry inbound: null.
+      inbound: Leg.nullish(),
     }),
   ),
 });
@@ -72,7 +74,8 @@ function summariseLeg(leg: z.infer<typeof Leg>) {
 export function condenseFlights(raw: unknown, limit = 5) {
   const parsed = ProviderResponse.safeParse(raw);
   if (!parsed.success) throw new ToolError("flight provider returned an unexpected result shape", "malformed_output");
-  const { currency, itineraries } = parsed.data;
+  const { currency, itineraries, error } = parsed.data;
+  if (error) throw new ToolError(`flight provider reported an error: ${JSON.stringify(error).slice(0, 200)}`, "provider");
   return {
     provider: "Kiwi.com",
     currency,

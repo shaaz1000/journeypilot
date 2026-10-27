@@ -52,19 +52,3 @@ export const searchHotelsTool = defineTool({
     };
   },
 });
-
-export const calculateStayCostTool = defineTool({
-  name: "calculate_stay_cost",
-  description: "Compute the total stay cost from a nightly rate, number of nights and optional tax percentage.",
-  input: z.object({
-    nightlyRate: z.number().positive(),
-    nights: z.number().int().min(1).max(60),
-    taxPercent: z.number().min(0).max(50).default(0),
-  }),
-  source: "local",
-  async execute({ nightlyRate, nights, taxPercent }) {
-    const subtotal = nightlyRate * nights;
-    const total = Math.round(subtotal * (1 + taxPercent / 100) * 100) / 100;
-    return { dataSource: "computed", data: { nightlyRate, nights, taxPercent, subtotal, total } };
-  },
-});
