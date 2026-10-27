@@ -115,12 +115,12 @@ export class Orchestrator {
     const citations = uniqueCitations(results);
     const limitations = [...limitationsFor(results), ...declinedNote(decision)];
     let body = await this.synthesise(tracer, task, results, rootSpan);
-    let review = reviewAnswer(compose(body, citations, limitations), results, citations);
+    let review = reviewAnswer(body, results, citations);
     let replaced = false;
     if (!review.passed) {
       replaced = true;
       body = `I couldn't fully verify the written summary, so here are the results exactly as the tools returned them:\n${evidenceDigest(results)}`;
-      const recheck = reviewAnswer(compose(body, citations, limitations), results, citations);
+      const recheck = reviewAnswer(body, results, citations);
       review = { passed: recheck.passed, findings: [...review.findings, ...recheck.findings.map((f) => `after replacement: ${f}`)] };
     }
     tracer.emit("review", { passed: review.passed, findings: review.findings, replaced }, { parentSpanId: rootSpan });

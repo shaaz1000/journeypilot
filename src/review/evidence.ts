@@ -11,12 +11,49 @@ const MONEY = new RegExp(String.raw`(?:[£$€]|\b${CURRENCY}\b)\s?${AMOUNT}|${A
 const URL = /https?:\/\/[^\s)\]>"']+/g;
 const MAX_SOURCE_AGE_MS = 24 * 3_600_000;
 
-function collectNumbers(value: unknown, into: Set<number>): Set<number> {
-  if (typeof value === "number") into.add(Math.round(value * 100) / 100);
-  else if (typeof value === "string") for (const m of value.matchAll(/\d+(?:\.\d+)?/g)) into.add(Number(m[0]));
-  else if (Array.isArray(value)) value.forEach((v) => collectNumbers(v, into));
-  else if (value && typeof value === "object") Object.values(value).forEach((v) => collectNumbers(v, into));
-  return into;
+/** Provider fields that may ground a price. Echoed query arguments are deliberately not among them. */
+const PRICE_FIELDS = new Set(["price", "nightlyRate", "totalStayCost"]);
+const URL_FIELDS = new Set(["bookingUrl", "url"]);
+
+const round = (n: number) => Math.round(n * 100) / 100;
+
+function walk(value: unknown, visit: (key: string, inner: unknown) => void): void {
+  if (Array.isArray(value)) value.forEach((v) => walk(v, visit));
+  else if (value && typeof value === "object") {
+    for (const [key, inner] of Object.entries(value)) {
+      visit(key, inner);
+      walk(inner, visit);
+    }
+  }
+}
+
+/** Prices and links the tools themselves returned, excluding anything the model supplied as input. */
+export function groundedFacts(results: SpecialistResult[], citations: Citation[]): { prices: Set<number>; urls: Set<string> } {
+  const prices = new Set<number>();
+  const urls = new Set(citations.map((c) => c.url));
+  const evidence = results.flatMap((r) => r.evidence);
+  for (const e of evidence) {
+    if (e.dataSource === "computed") continue;
+    if (e.dataSource === "official_page") {
+      // Official page text is provider content; amounts quoted in it (guest fees, visit charges) are grounded.
+      const excerpts = (e.data as { excerpts?: unknown }).excerpts;
+      for (const text of Array.isArray(excerpts) ? excerpts : []) if (typeof text === "string") moneyAmounts(text).forEach((n) => prices.add(n));
+      continue;
+    }
+    walk(e.data, (key, inner) => {
+      if (PRICE_FIELDS.has(key) && typeof inner === "number") prices.add(round(inner));
+      if (URL_FIELDS.has(key) && typeof inner === "string") urls.add(inner);
+    });
+  }
+  // A computed total is grounded only when the rate it was computed from is itself grounded.
+  for (const e of evidence) {
+    const d = e.data as { nightlyRate?: number; subtotal?: number; total?: number };
+    if (e.dataSource === "computed" && d.nightlyRate !== undefined && prices.has(round(d.nightlyRate))) {
+      if (d.subtotal !== undefined) prices.add(round(d.subtotal));
+      if (d.total !== undefined) prices.add(round(d.total));
+    }
+  }
+  return { prices, urls };
 }
 
 export function moneyAmounts(text: string): number[] {
@@ -28,23 +65,22 @@ export function moneyAmounts(text: string): number[] {
 }
 
 /**
- * Deterministic grounding check of the final answer against recorded tool output.
- * Every price and link must trace back to evidence; benefit answers need a fetched official page.
+ * Deterministic grounding check of the model-written answer body against recorded tool output.
+ * Run it before sources and limitations are appended, so code-added text cannot mask a failure.
  */
-export function reviewAnswer(answer: string, results: SpecialistResult[], citations: Citation[], now = Date.now()): ReviewResult {
+export function reviewAnswer(body: string, results: SpecialistResult[], citations: Citation[], now = Date.now()): ReviewResult {
   const findings: string[] = [];
   const evidence = results.flatMap((r) => r.evidence);
-  const numbers = collectNumbers(evidence.map((e) => e.data), new Set());
-  const evidenceText = JSON.stringify(evidence.map((e) => e.data)) + JSON.stringify(citations);
+  const { prices, urls } = groundedFacts(results, citations);
 
-  for (const amount of moneyAmounts(answer)) {
-    if (!numbers.has(amount)) findings.push(`price ${amount} does not appear in any tool result`);
+  for (const amount of moneyAmounts(body)) {
+    if (!prices.has(amount)) findings.push(`price ${amount} does not appear in any tool result`);
   }
-  for (const url of answer.match(URL) ?? []) {
+  for (const url of body.match(URL) ?? []) {
     const clean = url.replace(/[.,;:]+$/, "");
-    if (!evidenceText.includes(clean)) findings.push(`link ${clean} does not appear in any tool result`);
+    if (!urls.has(clean)) findings.push(`link ${clean} does not appear in any tool result`);
   }
-  if (evidence.some((e) => e.dataSource === "demo_fixture") && !/demo/i.test(answer)) {
+  if (evidence.some((e) => e.dataSource === "demo_fixture") && !/demo/i.test(body)) {
     findings.push("demo hotel data is not labelled as demo");
   }
   const benefits = results.find((r) => r.agent === "benefits");
@@ -52,7 +88,8 @@ export function reviewAnswer(answer: string, results: SpecialistResult[], citati
     findings.push("benefit answer has no fetched official page behind it");
   }
   for (const c of citations) {
-    if (now - Date.parse(c.retrievedAt) > MAX_SOURCE_AGE_MS) findings.push(`source ${c.url} is older than 24 hours`);
+    const retrieved = Date.parse(c.retrievedAt);
+    if (Number.isNaN(retrieved) || now - retrieved > MAX_SOURCE_AGE_MS) findings.push(`source ${c.url} is stale or has no valid retrieval time`);
   }
   return { passed: findings.length === 0, findings };
 }
