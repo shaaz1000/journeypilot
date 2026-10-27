@@ -1,0 +1,218 @@
+# JourneyPilot
+
+A small multi-agent assistant for travel and airport experiences, written in TypeScript on Node.js. An
+orchestrator classifies each request, applies a scope policy, and delegates to specialist agents for
+flights, hotels, and lounge and travel-card benefits. Every agent step is traced, and the final answer is
+checked against what the tools actually returned.
+
+The model is NVIDIA Nemotron on NVIDIA's free hosted endpoint. Flight data is live, from the Kiwi.com
+public MCP server.
+
+Full reasoning, including the review of the brief against the original plan, is in [PLAN.md](PLAN.md).
+
+## Run it
+
+Requires Node.js 21.7 or later (the code uses `process.loadEnvFile`).
+
+```bash
+npm install
+cp .env.example .env          # then set NVIDIA_API_KEY
+npm run ask -- --trace "Compare flights from London to New York on 2026-12-10"
+npm run ask                   # interactive mode
+npm test                      # offline tests, no network or key needed
+npm run eval                  # live evaluation suite (needs the key and network)
+npm run eval -- --case lounge-eligibility --repeat 3
+```
+
+### Model configuration
+
+1. Create a free account at [build.nvidia.com](https://build.nvidia.com) and generate an API key (it starts with `nvapi-`).
+2. Put it in `.env` as `NVIDIA_API_KEY`.
+3. Optional: set `NVIDIA_MODEL`. The default is `nvidia/nemotron-3.5-lightning-30b-a3b`.
+
+Which models your key can call varies by account. On 2026-10-27, with a free-tier key:
+
+| Model | Result |
+|-------|--------|
+| `nvidia/nemotron-3.5-lightning-30b-a3b` | Works with function calling, about 1 to 3 s per call. Default. |
+| `nvidia/nemotron-3-ultra-550b-a55b` | Works, but slower. |
+| `nvidia/nemotron-3-super-120b-a12b`, `nvidia/nemotron-nano-3-30b-a3b` | Listed in the catalog, but return 404 for this account. |
+
+To check your own key: `curl -s https://integrate.api.nvidia.com/v1/models -H "Authorization: Bearer $NVIDIA_API_KEY"`.
+
+Two settings matter with this endpoint:
+- Reasoning is turned off (`chat_template_kwargs.enable_thinking=false`); otherwise the thinking tokens use up the budget before the model makes a tool call.
+- Structured output uses a forced function call validated with zod, because `response_format: json_schema` produced degenerate output.
+
+There is no silent fallback to another provider.
+
+## Architecture
+
+```
+user message
+   |
+   v
+Orchestrator --classify (forced function call, zod-validated)--> Nemotron
+   |
+   v
+Policy gate (code): malformed -> refuse | no travel intent -> decline | low confidence -> clarify
+   |  allow: intents mapped to agents in code, travel part of the request only
+   v
++-------------+  +-------------+  +------------------+
+| Flight      |  | Hotel       |  | Benefits         |   run in parallel, each with a
+| agent       |  | agent       |  | agent            |   bounded tool loop (3 to 4 steps)
++------+------+  +------+------+  +--------+---------+
+       |                |                  |
+       v                v                  v
+            ToolGateway (code): permissions, zod args, timeout, retry, trace
+       |                |                  |
+ search_flights    search_hotels    find_official_sources, fetch_official_page
+ (Kiwi MCP, live)  (demo fixture)   (registry + allowlisted fetch)
+   |
+   v
+Orchestrator synthesis (LLM) -> Evidence reviewer (code) -> answer + limitations + sources
+```
+
+### How responsibilities are divided
+
+| Component | Responsibility | Tools |
+|-----------|----------------|-------|
+| Orchestrator | Classify, plan, delegate, combine, write the final answer | `classify_request` only. It cannot call specialist tools. |
+| Flight agent | Search and compare flights | `search_flights` |
+| Hotel agent | Compare hotels; nightly rate vs total stay cost | `search_hotels` |
+| Benefits agent | Lounge access, Priority Pass, card benefits | `find_official_sources`, `fetch_official_page` |
+| Evidence reviewer | Check that answer prices and links match tool output; labelling; source freshness | none (deterministic code) |
+
+### Key decisions
+
+- **Delegation is decided by code, not left to the model.** The model classifies the request. Code maps the validated intents to agents (`flight_search` to Flight, and so on) and runs only those agents. A model therefore cannot route a request to an agent its intents do not justify, and delegation is easy to test.
+- **Tool permissions are enforced in `ToolGateway`.** Each agent's model only sees its own tools. If it names another agent's tool anyway, the call is refused and logged as `not_permitted`. Arguments are validated with zod before anything runs, so bad dates, past departures or URLs off the allowlist never reach a provider.
+- **Scope is decided once, before any agent runs.** Agents receive only the travel part of the request. Retrieved pages and tool output are wrapped as untrusted data, with `<` and `>` escaped so they cannot close the wrapper, and so cannot widen scope.
+- **Grounding is checked in code.** The reviewer accepts only prices taken from provider fields (fare `price`, `nightlyRate`, `totalStayCost`, amounts quoted on fetched official pages) or the difference between two prices from the same search. Links must exactly match a returned booking or source URL. If the model's text fails, a digest built only from tool output replaces it, and the trace records why.
+- **No agent framework.** A small loop over the OpenAI-compatible API keeps permissions, validation and tracing in one place that tests can inspect directly. Mastra would be a reasonable next step (see below); the gateway and policy gate would carry over as tool wrappers.
+
+### MCP integration
+
+The Kiwi.com public MCP server (`https://mcp.kiwi.com`, streamable HTTP, no key) is connected at startup. The flight tool is found by its input schema (`flyFrom`, `flyTo`, `departureDate`), not by a hard-coded name. Results are condensed to the fields the provider returned.
+
+Failures that are handled:
+- Connection failure (retried once at startup; flight search then reports itself unavailable).
+- Timeouts (retried once per call).
+- Error results from the server.
+- Non-JSON content, or an unexpected result shape.
+
+In live runs the endpoint occasionally drops a TCP connection or takes over 30 s, which is why these paths exist.
+
+What each journey actually uses:
+
+| Journey | Data | Status |
+|---------|------|--------|
+| Flights | Kiwi.com via MCP | Live |
+| Hotels | Local fixture | Demo only, labelled in every answer. No free, keyless hotel provider was available. |
+| Lounges and cards | Official issuer and programme pages fetched live (Priority Pass, Amex UK, Capital One, LoungeKey, DragonPass) | Live, cited with URL and retrieval time |
+| Trip planning | Orchestrator combines specialist results | Uses the above |
+
+## Observability
+
+Each request writes JSONL events to `logs/<date>.jsonl`. Events share a `traceId` and `requestId` and are linked by `spanId` and `parentSpanId`.
+
+| Event | What it records |
+|-------|-----------------|
+| `request` | The submitted message (redacted) |
+| `classification` | Intents, confidence, travel task, unsupported portion |
+| `policy` | Outcome, reason, selected agents |
+| `delegation` | Agent and reason |
+| `model` | Purpose, model ID, latency, token usage, finish reason |
+| `tool` | Agent, tool, MCP server, validated arguments, status, attempts, duration, result preview |
+| `agent` | Status, tools used, errors, reminders |
+| `review` | Findings, whether the answer was replaced, the rejected text |
+| `final` | Status, sources, limitations, total duration |
+
+Run `npm run ask -- --trace "..."` to print the trace.
+
+Before any event is written, the following are redacted:
+- the configured API key and other key patterns
+- bearer tokens and fields with sensitive names
+- emails, phone numbers, card numbers and passport-like IDs
+
+Result payloads are logged as a 300-character preview unless `LOG_RAW_PAYLOADS=true`; secrets are redacted either way. Files older than `LOG_RETENTION_DAYS` (default 7) are deleted at startup. If a log write fails, a warning goes to stderr and the request continues; policy decisions are made before logging and do not depend on it.
+
+## Testing
+
+`npm test` runs 89 offline tests in about 4 seconds, with a scripted model and a real MCP server over an in-memory transport:
+
+| File | Covers |
+|------|--------|
+| `tests/policy.test.ts` | Fail-closed classification, decline, clarify, intent-to-agent mapping |
+| `tests/gateway.test.ts` | Permission denial without execution, invalid arguments, timeout and retry, least privilege |
+| `tests/mcp-flights.test.ts` | Schema-based tool discovery, argument mapping, provider errors, malformed output, replay of a recorded Kiwi response |
+| `tests/benefits.test.ts` | Domain allowlist (lookalike domains, credentials in URLs, metadata IPs), redirect checks, excerpts |
+| `tests/reviewer.test.ts` | Grounded and invented prices, echoed arguments, cross-result differences, links, demo labels, stale sources |
+| `tests/redaction.test.ts` | Secret and personal-data masking, redaction before truncation, sink failure, retention |
+| `tests/orchestrator.test.ts` | Refusal before any agent runs, mixed requests, multi-agent trips, tool failure, injected page content, reminder path, trace correlation |
+
+## Evaluation
+
+The question the evals answer is: did the right path produce this answer? A fluent answer reached by the wrong path should still fail. `npm run eval` sends eight live requests through the real model, MCP server and websites and grades each one, mostly from its trace:
+
+- **Policy:** the expected outcome (allow, decline, refuse).
+- **Delegation:** exactly the expected set of agents ran, no more and no fewer.
+- **Blocked before execution:** for declined requests, zero delegations and zero tool calls.
+- **Tool permissions:** no `not_permitted` calls, and every call is inside its agent's allowlist.
+- **Required tools and MCP usage:** the expected tools succeeded, including at least one call through the MCP server where flights are involved.
+- **Grounding review:** the final answer passed the evidence check.
+- **Answer text:** required content (currency, demo label, citation domain, decline notice) is present and forbidden content is absent.
+- **Soft signals,** reported but not failing a case:
+  - whether the model's own answer survived review;
+  - for benefit answers, the share of answer lines whose words overlap the fetched page text.
+
+Cases: flight comparison, hotel stay, lounge eligibility, an unrelated coding request, unrelated finance advice, a mixed request, direct prompt injection, and a multi-domain trip. Dates are relative to today, so the suite does not go stale.
+
+**Catching regressions.** Every run writes `evals/results/<timestamp>.json` with per-check pass rates, latency, model calls, tool calls and tokens. The runner exits non-zero on any hard failure, so it can gate CI. `--repeat N` measures flakiness, which matters with a nondeterministic model.
+
+**What the evals found while building this:**
+- Specialists answered without calling tools: for "3 nights from <date>" with no check-out date, and for "Heathrow" not being matched as a city.
+- A computed "£20 premium" was flagged as ungrounded; the review now accepts correct differences within one search, and still rejects wrong ones such as "£39 cheaper" when the gap is £29.
+- "1 560 AED", with a space as thousands separator, was misread as 560.
+
+Each was fixed in its own commit.
+
+**Latest results:** 16/16 case runs passed over two live passes; details in [Latest evaluation results](#latest-evaluation-results).
+
+## Assumptions and limitations
+
+- Hotel data is a demo fixture. A real provider would replace `search_hotels` behind the same gateway.
+- Lounge and card answers are only as good as the official pages in the registry (six pages). The reviewer checks prices and links, not whether every sentence is supported. The `excerpt_support` signal shows this gap: benefit answers sometimes include general caveats that are not in the fetched text.
+- Kiwi prices are in the requested currency, GBP by default. Results from a city search can include nearby airports (for example Sharjah for Dubai).
+- The model is nondeterministic. The reminder step and the evals reduce, but do not remove, cases where an agent answers without searching.
+- Classification is a single model call. If the model is unavailable, the request fails closed and nothing runs.
+- There is no conversation memory; each message is handled on its own.
+
+## What I would change for production
+
+- Move the agents onto Mastra (or similar) for workflows, memory and deployment, keeping the gateway and policy gate as the enforcement layer.
+- Ship traces to OpenTelemetry, with dashboards for policy outcomes, tool error rates, review replacements and latency per agent.
+- Use a stronger model, or a second classifier, for the policy decision, and calibrate the confidence threshold against labelled traffic.
+- Add a model-based judge for claim-level support in benefit answers, calibrated against human labels, alongside the deterministic checks.
+- Real hotel inventory and authenticated provider access, with response caching and rate limiting per provider.
+- A larger, versioned eval set built from anonymised production traces, run in CI on every prompt or model change, with thresholds per check.
+- Secrets in a manager rather than `.env`; centralised log retention and access control.
+
+## Latest evaluation results
+
+`npm run eval -- --repeat 2` on 2026-10-27 with `nvidia/nemotron-3.5-lightning-30b-a3b` and the live Kiwi MCP server: **16/16 case runs passed.**
+
+| Check | Pass rate |
+|-------|-----------|
+| policy, delegation, tool_permissions | 16/16 each |
+| blocked_before_execution | 6/6 |
+| required_tools | 12/12 |
+| mcp_used | 4/4 |
+| grounding_review | 10/10 |
+| answer text, citations, status | 18/18, 4/4, 12/12 |
+| synthesis_kept (soft) | 8/10 |
+| excerpt_support (soft) | 3/4 |
+
+Median case latency was 9.8 s; the slowest was 46 s, a flight search where the Kiwi call was slow. The run used about 76k tokens in total.
+
+Both `synthesis_kept` misses were real arithmetic errors by the model, caught by the reviewer. The fares were £312 and £341. In one run the model wrote "£39 cheaper", and in the other "saves £31"; the correct difference is £29. In both cases the traveller received the tool-verified figures instead. An earlier single run had failed `multi-domain-trip` because the Hotel agent answered without searching; the reminder step in `32e5fc4` fixed it.
