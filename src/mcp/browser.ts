@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { ToolError } from "../tools/types.js";
 import { McpConnection } from "./connection.js";
+import { assertPublicHost, BLOCKED_BROWSER_ORIGINS } from "./netguard.js";
 
 export interface RenderedPage {
   url: string;
@@ -82,7 +83,7 @@ export class PlaywrightPageReader implements PageReader {
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(
-    private readonly options: { timeoutMs: number; open?: () => Promise<McpConnection> } = { timeoutMs: 45_000 },
+    private readonly options: { timeoutMs: number; open?: () => Promise<McpConnection>; checkHost?: (url: string) => Promise<void> } = { timeoutMs: 45_000 },
   ) {}
 
   static defaultOpen(timeoutMs: number): () => Promise<McpConnection> {
@@ -90,7 +91,7 @@ export class PlaywrightPageReader implements PageReader {
     return () =>
       McpConnection.open(
         "playwright",
-        () => new StdioClientTransport({ command: process.execPath, args: [cli, "--headless", "--isolated", "--browser", "chromium", "--snapshot-mode", "none"], stderr: "ignore" }),
+        () => new StdioClientTransport({ command: process.execPath, args: [cli, "--headless", "--isolated", "--browser", "chromium", "--snapshot-mode", "none", "--blocked-origins", BLOCKED_BROWSER_ORIGINS.join(";")], stderr: "ignore" }),
         timeoutMs,
       );
   }
@@ -113,6 +114,12 @@ export class PlaywrightPageReader implements PageReader {
   read(url: string, signal: AbortSignal): Promise<RenderedPage> {
     // Serialised: the server drives a single browser tab.
     const run = this.queue.then(async () => {
+      // Refuse before the browser makes any request: a name that resolves to an internal address is never loaded.
+      try {
+        await (this.options.checkHost ?? assertPublicHost)(url);
+      } catch (error) {
+        throw new BlockedPageError(url, error instanceof Error ? error.message : String(error));
+      }
       let browser: McpConnection;
       try {
         browser = await this.connect();

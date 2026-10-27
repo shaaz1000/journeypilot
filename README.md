@@ -263,6 +263,7 @@ Each was fixed in its own commit.
 - Real hotel inventory and authenticated provider access, with response caching and rate limiting per provider.
 - A larger, versioned eval set built from anonymised production traces, run in CI on every prompt or model change, with thresholds per check.
 - Secrets in a manager rather than `.env`; centralised log retention and access control.
+- Run the headless browser in its own network-isolated container with an egress allowlist. Locally it is guarded by a DNS check that refuses internal addresses before navigation, Playwright's blocked-origins list for loopback and metadata hosts, and a final-URL allowlist check. A compromised allowlisted site could still redirect mid-load, which only network isolation closes.
 
 ## Latest evaluation results
 

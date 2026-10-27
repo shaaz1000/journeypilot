@@ -32,8 +32,26 @@ async function fakePlaywright(pages: Record<string, RenderedPage>, tools = ["bro
     await server.connect(serverSide);
     return McpConnection.open("playwright", () => client, 5000);
   };
-  return { reader: new PlaywrightPageReader({ timeoutMs: 5000, open }), navigated };
+  return { reader: new PlaywrightPageReader({ timeoutMs: 5000, open, checkHost: async () => undefined }), navigated };
 }
+
+describe("network guard", () => {
+  it("recognises internal addresses", async () => {
+    const { isInternalAddress } = await import("../src/mcp/netguard.js");
+    for (const a of ["127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1"]) expect(isInternalAddress(a)).toBe(true);
+    for (const a of ["8.8.8.8", "151.101.3.42", "2a04:4e42::81"]) expect(isInternalAddress(a)).toBe(false);
+  });
+
+  it("refuses a public-looking name that resolves to an internal address, before the browser loads it", async () => {
+    const { assertPublicHost } = await import("../src/mcp/netguard.js");
+    const rebinding = (async () => [{ address: "169.254.169.254", family: 4 }]) as never;
+    await expect(assertPublicHost("https://www.akasaair.com/baggage", rebinding)).rejects.toThrow(/internal address/);
+    const { reader, navigated } = await fakePlaywright({});
+    const guarded = new PlaywrightPageReader({ timeoutMs: 5000, open: (reader as unknown as { options: { open: () => Promise<McpConnection> } }).options.open, checkHost: (url) => assertPublicHost(url, rebinding) });
+    await expect(guarded.read("https://www.akasaair.com/baggage", new AbortController().signal)).rejects.toBeInstanceOf(BlockedPageError);
+    expect(navigated).toEqual([]);
+  });
+});
 
 describe("Playwright page reader", () => {
   it("parses the JSON under the Result section", () => {
