@@ -84,10 +84,12 @@ button {
 }
 
 .reply { background: var(--paper); border: 1px solid var(--rule); border-radius: var(--radius); padding: 1.1rem 1.25rem; }
-.reply--declined, .reply--refused, .reply--clarify { border-left: 4px solid var(--tarmac); }
+.reply--declined, .reply--refused { border-left: 4px solid var(--tarmac); }
+.reply--clarify { border-left: 4px solid var(--signal); }
 .reply--failed { border-left: 4px solid var(--alert); }
 .reply__flag { margin: 0 0 0.5rem; font-weight: 700; color: var(--tarmac); }
 .reply--failed .reply__flag { color: var(--alert); }
+.reply__flag--ask { color: var(--asphalt); }
 .reply h3 { font-size: var(--step-0); margin: 1.1rem 0 0.35rem; }
 .reply__notes ul, .reply__sources ul { margin: 0; padding-left: 1.2rem; }
 .reply__notes li, .reply__sources li { margin: 0.2rem 0; }

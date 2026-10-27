@@ -12,6 +12,7 @@ export type ToolInvocation =
   | { ok: false; toolCallId: string; error: ToolError };
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const RETRY_BACKOFF_MS = 750;
 
 /**
  * The only path from an agent to a tool. Permissions, argument validation, timeouts,
@@ -94,6 +95,8 @@ export class ToolGateway {
         if (!lastError.retryable || attempt === maxAttempts) {
           return fail(lastError, { args: parsed.data, attempts: attempt, durationMs: Math.round(performance.now() - started) });
         }
+        // Short, growing pause so a flaky connection has a moment to recover before the next attempt.
+        await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS * attempt));
       }
     }
     return fail(lastError);

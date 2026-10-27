@@ -25,7 +25,7 @@ export function safeLink(href: string, label?: string): HTMLElement {
   return el("a", { href: url.toString(), target: "_blank", rel: "noopener noreferrer" }, label ?? href);
 }
 
-const INLINE = /(\*\*[^*]+\*\*|https?:\/\/[^\s)\]]+)/g;
+const INLINE = /(\*\*[^*]+\*\*|https?:\/\/[^\s)\]`]+)/g;
 
 function inline(text: string): Node[] {
   const nodes: Node[] = [];

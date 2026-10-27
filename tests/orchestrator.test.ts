@@ -60,6 +60,25 @@ describe("orchestrator: domain restriction", () => {
     expect(result).toMatchObject({ status: "clarify", answer: "Where and when are you travelling?" });
   });
 
+  it("asks a plain question when the travel date is missing, without running any agent", async () => {
+    const llm = new ScriptedLlm({ classify: () => classification({ intents: ["flight_search"], confidence: 0.95, travel_task: "Flights from Mumbai to Delhi", missing_details: ["departure_date"] }) });
+    const { result, tracer } = await testOrchestrator({ llm }).orchestrator.handle("find me a bombay delhi ticket");
+    expect(result.status).toBe("clarify");
+    expect(result.answer).toContain("Which date do you want to fly?");
+    expect(result.answer).not.toMatch(/specialist|tool|failed/i);
+    expect(eventsOf(tracer.events, "delegation")).toHaveLength(0);
+    expect(eventsOf(tracer.events, "policy")[0]).toMatchObject({ outcome: "clarify", missingDetails: ["departure_date"] });
+  });
+
+  it("reads a follow-up together with the message it completes", async () => {
+    const llm = new ScriptedLlm({ classify: () => classification({ intents: ["flight_search"], confidence: 0.95, travel_task: "Flights Mumbai to Delhi on 2026-11-15" }), "agent:flight": () => text("Need nothing else"), synthesise: () => text("ok") });
+    const { tracer } = await testOrchestrator({ llm }).orchestrator.handle("15 November", { previousMessage: "find me a bombay delhi ticket" });
+    const prompt = llm.calls[0]!.messages[1]!.content as string;
+    expect(prompt).toContain("<previous_message>\nfind me a bombay delhi ticket");
+    expect(prompt).toContain("<user_message>\n15 November");
+    expect(eventsOf(tracer.events, "request")[0]).toMatchObject({ message: "15 November", previousMessage: "find me a bombay delhi ticket" });
+  });
+
   it("rejects empty and over-long messages without calling the model", async () => {
     const llm = new ScriptedLlm({});
     const { orchestrator } = testOrchestrator({ llm });
@@ -120,7 +139,7 @@ describe("orchestrator: delegation and tool use", () => {
     expect(eventsOf(tracer.events, "agent").map((e) => e.status)).toEqual(["reminded", "ok"]);
   });
 
-  it("does not loop when a specialist still cannot act after the reminder", async () => {
+  it("turns a specialist that still needs a detail into a question, not a failure", async () => {
     const llm = new ScriptedLlm({
       classify: () => classification({ intents: ["flight_search"], confidence: 0.9, travel_task: "Flights to Paris" }),
       "agent:flight": () => text("I need a departure date and origin."),
@@ -128,7 +147,8 @@ describe("orchestrator: delegation and tool use", () => {
     });
     const { result } = await testOrchestrator({ llm }).orchestrator.handle("Flights to Paris");
     expect(llm.purposes().filter((p) => p === "agent:flight")).toHaveLength(2);
-    expect(result.status).toBe("failed");
+    expect(result.status).toBe("clarify");
+    expect(result.limitations).toEqual([]);
   });
 
   it("blocks a specialist that tries to call another agent's tool", async () => {
@@ -188,7 +208,7 @@ describe("orchestrator: failures and grounding", () => {
     });
     const { result, tracer } = await testOrchestrator({ llm, kiwi: kiwi.connection }).orchestrator.handle("Flights LHR to JFK 10 Dec");
     expect(result.status).toBe("failed");
-    expect(result.limitations.join(" ")).toMatch(/Flights data is unavailable .*search_flights: provider/);
+    expect(result.limitations).toEqual(["The flight search service isn't responding properly right now. Please try again shortly."]);
     expect(result.answer).not.toMatch(/\d+ GBP/);
     const toolEvents = eventsOf(tracer.events, "tool");
     expect(toolEvents.every((e) => e.status === "provider" && typeof e.durationMs === "number")).toBe(true);

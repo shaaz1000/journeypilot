@@ -110,7 +110,8 @@ export function createFlightSearchTool({ connection, timeoutMs, unavailableReaso
     source: "mcp",
     server: connection?.serverName ?? "kiwi",
     timeoutMs,
-    retries: 1,
+    // Connection drops to the public endpoint are common enough that one retry was not always sufficient.
+    retries: 2,
     async execute(args, { signal }) {
       if (!connection || !providerTool) {
         throw new ToolError(`flight provider unavailable: ${unavailableReason ?? "no flight search tool discovered on the MCP server"}`, "provider");

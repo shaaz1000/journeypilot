@@ -1,4 +1,7 @@
-import { ClassificationSchema, type AgentName, type PolicyDecision, type TravelIntent } from "../schemas.js";
+import { ClassificationSchema, type AgentName, type PolicyDecision, type RequiredDetail, type TravelIntent } from "../schemas.js";
+
+const FLIGHT_DETAILS = new Set<RequiredDetail>(["origin", "destination", "departure_date"]);
+const HOTEL_DETAILS = new Set<RequiredDetail>(["hotel_city", "check_in_date"]);
 
 export const MIN_CONFIDENCE = 0.6;
 
@@ -35,6 +38,11 @@ export function decidePolicy(raw: unknown): PolicyDecision {
   const agents = [...new Set(c.intents.map((intent) => AGENT_FOR_INTENT[intent]).filter((a): a is AgentName => a !== null))];
   if (agents.length === 0) {
     return { outcome: "clarify", agents: [], reason: "planning request without flight, hotel or lounge details", declinedPortion };
+  }
+  // Only details that belong to a selected agent count; a stray hotel slot on a flight search is ignored.
+  const relevant = c.missing_details.filter((d) => (FLIGHT_DETAILS.has(d) && agents.includes("flight")) || (HOTEL_DETAILS.has(d) && agents.includes("hotel")));
+  if (relevant.length > 0) {
+    return { outcome: "clarify", agents: [], reason: `missing ${relevant.join(", ")}`, declinedPortion, missingDetails: [...new Set(relevant)] };
   }
   return { outcome: "allow", agents, reason: `intents: ${c.intents.join(", ")}`, declinedPortion };
 }

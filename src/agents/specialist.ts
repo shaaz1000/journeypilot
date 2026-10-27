@@ -103,7 +103,8 @@ export async function runSpecialist(
     tracer.emit("agent", { agent: config.name, status: "model_error", error: String(error) }, { parentSpanId: spanId });
   }
 
-  const status = evidence.length === 0 ? "failed" : errors.length > 0 ? "partial" : "ok";
+  // No tools and no errors means the agent stopped to ask for something, which is not a failure.
+  const status = evidence.length > 0 ? (errors.length > 0 ? "partial" : "ok") : errors.length > 0 ? "failed" : "needs_input";
   tracer.emit(
     "agent",
     {

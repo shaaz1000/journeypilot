@@ -9,7 +9,8 @@ const CURRENCY = String.raw`(?:GBP|USD|EUR|SGD|AED|INR|JPY|CHF|AUD|CAD)`;
 // Thousands may be grouped with commas or spaces (including no-break and thin spaces): "1,560" or "1 560".
 const AMOUNT = String.raw`(\d{1,3}(?:[,\u00a0\u202f\u2009 ]\d{3})+|\d+)(?:\.(\d{1,2}))?`;
 const MONEY = new RegExp(String.raw`(?:[£$€]|\b${CURRENCY}\b)\s?${AMOUNT}|${AMOUNT}\s?(?:[£$€]|\b${CURRENCY}\b)`, "g");
-const URL = /https?:\/\/[^\s)\]>"']+/g;
+// Stops at backticks too: models often wrap links in markdown code spans.
+const URL = /https?:\/\/[^\s)\]>"'`]+/g;
 const MAX_SOURCE_AGE_MS = 24 * 3_600_000;
 
 /** Provider fields that may ground a price. Echoed query arguments are deliberately not among them. */

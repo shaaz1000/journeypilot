@@ -12,12 +12,14 @@ const TOKEN = "test-admin-token-123";
 let server: Server;
 let base: string;
 let lastTraceId = "";
+let lastPrevious: string | undefined;
 
 beforeAll(async () => {
   const logDir = mkdtempSync(join(tmpdir(), "jp-web-"));
   const sink = new JsonlFileSink(logDir);
   const orchestrator = {
-    async handle(message: string) {
+    async handle(message: string, options: { previousMessage?: string } = {}) {
+      lastPrevious = options.previousMessage;
       const tracer = new Tracer([sink]);
       const root = tracer.emit("request", { message });
       tracer.emit("tool", { agent: "flight", tool: "search_flights", status: "ok", args: { origin: "LHR" } }, { parentSpanId: root });
@@ -67,6 +69,12 @@ describe("web server", () => {
     expect(JSON.stringify(data)).not.toContain("search_flights");
   });
 
+  it("passes the earlier message through for a follow-up", async () => {
+    await chat({ message: "15 November", previous: "find me a bombay delhi ticket" });
+    expect(lastPrevious).toBe("find me a bombay delhi ticket");
+    expect((await chat({ message: "15 November", previous: 42 })).status).toBe(400);
+  });
+
   it("rejects malformed chat requests", async () => {
     expect((await chat({ text: "hi" })).status).toBe(400);
     expect((await fetch(`${base}/api/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{not json" })).status).toBe(400);
@@ -91,7 +99,7 @@ describe("web server", () => {
     expect((await admin("/api/admin/traces")).status).toBe(401);
     expect((await admin("/api/admin/traces", "wrong-token-of-same-size")).status).toBe(401);
     const list = await (await admin("/api/admin/traces", TOKEN)).json();
-    expect(list[0]).toMatchObject({ message: "Flights LHR to JFK", status: "answered", toolCalls: 1 });
+    expect(list.find((t: { message: string }) => t.message === "Flights LHR to JFK")).toMatchObject({ status: "answered", toolCalls: 1 });
   });
 
   it("returns every logged event of a trace to an admin", async () => {

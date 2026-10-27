@@ -16,6 +16,10 @@ const form = document.querySelector<HTMLFormElement>("#composer")!;
 const input = document.querySelector<HTMLTextAreaElement>("#message")!;
 const send = document.querySelector<HTMLButtonElement>("#send")!;
 const intro = document.querySelector<HTMLElement>("#intro")!;
+const DEFAULT_PLACEHOLDER = input.placeholder;
+
+/** While JourneyPilot is waiting on a detail, the earlier messages travel with the next one. */
+let pendingContext: string | null = null;
 
 function scrollToEnd(): void {
   window.scrollTo({ top: document.body.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
@@ -24,7 +28,7 @@ function scrollToEnd(): void {
 function renderReply(reply: ChatReply): HTMLElement {
   const card = el("article", { class: `reply reply--${reply.status}` });
   if (reply.status === "declined" || reply.status === "refused") card.append(el("p", { class: "reply__flag" }, "Outside what JourneyPilot covers"));
-  if (reply.status === "clarify") card.append(el("p", { class: "reply__flag" }, "Needs a little more detail"));
+  if (reply.status === "clarify") card.append(el("p", { class: "reply__flag reply__flag--ask" }, "One more detail needed"));
   if (reply.status === "failed") card.append(el("p", { class: "reply__flag" }, "Couldn't get results this time"));
   card.append(richText(reply.body));
 
@@ -54,9 +58,21 @@ async function ask(message: string): Promise<void> {
   scrollToEnd();
   send.disabled = true;
   try {
-    const response = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message }) });
+    const previous = pendingContext;
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(previous ? { message, previous } : { message }),
+    });
     const data = (await response.json()) as ChatReply | { error: string };
     pending.replaceWith("error" in data ? el("p", { class: "error" }, data.error) : renderReply(data));
+    if (!("error" in data) && data.status === "clarify") {
+      pendingContext = previous ? `${previous}\n${message}` : message;
+      input.placeholder = "Type the missing detail, for example 15 November";
+    } else if (!("error" in data)) {
+      pendingContext = null;
+      input.placeholder = DEFAULT_PLACEHOLDER;
+    }
   } catch {
     pending.replaceWith(el("p", { class: "error" }, "JourneyPilot didn't respond. Check the server is running, then send your question again."));
   } finally {

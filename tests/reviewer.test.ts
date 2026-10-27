@@ -48,6 +48,10 @@ describe("evidence reviewer", () => {
     expect(reviewAnswer("Demo hotel saves £134.", rs, [], now).passed).toBe(false);
   });
 
+  it("reads links wrapped in markdown code spans", () => {
+    expect(reviewAnswer("Book at `https://kiwi.com/u/aaa` for £256.", [result("flight", [flights])], [], now).passed).toBe(true);
+  });
+
   it("flags links that were not returned exactly", () => {
     const review = reviewAnswer("Book at https://kiwi.com/u/aaa-fake", [result("flight", [flights])], [], now);
     expect(review.findings[0]).toMatch(/link .* does not appear/);

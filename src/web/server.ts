@@ -107,14 +107,15 @@ export async function createWebServer(options: ServerOptions): Promise<Server> {
 
       // Traveller endpoint: returns the answer only. Tool calls and traces stay on the admin side.
       if (req.method === "POST" && url.pathname === "/api/chat") {
-        let message: unknown;
+        let body: { message?: unknown; previous?: unknown };
         try {
-          message = ((await readJson(req)) as { message?: unknown })?.message;
+          body = ((await readJson(req)) ?? {}) as typeof body;
         } catch {
           return sendJson(res, 400, { error: "Send JSON like {\"message\": \"...\"} under 16 KB." });
         }
-        if (typeof message !== "string") return sendJson(res, 400, { error: "message must be a string" });
-        const { result } = await options.orchestrator.handle(message);
+        if (typeof body.message !== "string") return sendJson(res, 400, { error: "message must be a string" });
+        if (body.previous !== undefined && typeof body.previous !== "string") return sendJson(res, 400, { error: "previous must be a string" });
+        const { result } = await options.orchestrator.handle(body.message, { previousMessage: body.previous });
         return sendJson(res, 200, {
           requestId: result.requestId,
           status: result.status,

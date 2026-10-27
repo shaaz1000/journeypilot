@@ -6,12 +6,17 @@ export type AgentName = (typeof AGENT_NAMES)[number];
 export const TRAVEL_INTENTS = ["flight_search", "hotel_search", "lounge_benefits", "trip_planning"] as const;
 export type TravelIntent = (typeof TRAVEL_INTENTS)[number];
 
+/** Details a search cannot run without. Asked for before any agent runs. */
+export const REQUIRED_DETAILS = ["origin", "destination", "departure_date", "hotel_city", "check_in_date"] as const;
+export type RequiredDetail = (typeof REQUIRED_DETAILS)[number];
+
 /** What the orchestrator's classification call must return. Anything else fails closed. */
 export const ClassificationSchema = z.object({
   intents: z.array(z.enum(TRAVEL_INTENTS)).max(4),
   confidence: z.number().min(0).max(1),
   travel_task: z.string().max(1000),
   unsupported_portion: z.string().max(1000),
+  missing_details: z.array(z.enum(REQUIRED_DETAILS)).max(5).default([]),
   clarifying_question: z.string().max(300).default(""),
 });
 export type Classification = z.infer<typeof ClassificationSchema>;
@@ -23,6 +28,7 @@ export interface PolicyDecision {
   agents: AgentName[];
   reason: string;
   declinedPortion?: string;
+  missingDetails?: RequiredDetail[];
 }
 
 export interface Citation {
@@ -43,7 +49,8 @@ export interface EvidenceRecord {
   citation?: Citation;
 }
 
-export type SpecialistStatus = "ok" | "partial" | "failed";
+/** needs_input: the agent ran no tools and reported a missing detail instead of failing. */
+export type SpecialistStatus = "ok" | "partial" | "failed" | "needs_input";
 
 export interface SpecialistResult {
   agent: AgentName;

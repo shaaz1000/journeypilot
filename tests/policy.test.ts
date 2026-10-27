@@ -35,6 +35,16 @@ describe("policy gate", () => {
     expect(decision.agents).toEqual(["flight", "benefits"]);
   });
 
+  it("asks for missing search details before any agent runs", () => {
+    const decision = decidePolicy({ ...valid, missing_details: ["departure_date"] });
+    expect(decision).toMatchObject({ outcome: "clarify", agents: [], missingDetails: ["departure_date"] });
+  });
+
+  it("ignores missing details that belong to an agent the request does not use", () => {
+    expect(decidePolicy({ ...valid, missing_details: ["check_in_date"] }).outcome).toBe("allow");
+    expect(decidePolicy({ ...valid, intents: ["lounge_benefits"], missing_details: ["departure_date"] }).outcome).toBe("allow");
+  });
+
   it("keeps the unsupported portion of a mixed request for the answer", () => {
     const decision = decidePolicy({ ...valid, intents: ["lounge_benefits"], unsupported_portion: "write a poem" });
     expect(decision).toMatchObject({ outcome: "allow", agents: ["benefits"], declinedPortion: "write a poem" });
